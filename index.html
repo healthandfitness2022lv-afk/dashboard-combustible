@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Jefatura · Control Combustible Besalco</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Firebase compat (funciona desde file://, sin CORS) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script src="./firebase-config.js"></script>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">B</div>
+    <div class="logo-text">
+      <span class="logo-title">BESALCO</span>
+      <span class="logo-sub">Faena Minera</span>
+    </div>
+  </div>
+
+  <nav class="sidebar-nav">
+    <a href="#resumen"    class="nav-item active" data-section="resumen">
+      <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+      Resumen
+    </a>
+    <a href="#combustible" class="nav-item" data-section="combustible">
+      <svg viewBox="0 0 24 24"><path d="M19.77 7.23l.01-.01-3.72-3.72L15 4.56l2.11 2.11c-.94.36-1.61 1.26-1.61 2.33 0 1.38 1.12 2.5 2.5 2.5.36 0 .69-.08 1-.21v7.21c0 .55-.45 1-1 1s-1-.45-1-1V14c0-1.1-.9-2-2-2h-1V5c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2v16h10v-7.5h1.5v5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V9c0-.69-.28-1.32-.73-1.77zM18 10c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zM8 18v-4.5H6L10 6v5h2l-4 7z"/></svg>
+      Combustible
+    </a>
+    <a href="#equipos"   class="nav-item" data-section="equipos">
+      <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 13H5v-.23c0-.62.28-1.2.76-1.58C7.47 15.82 9.64 15 12 15s4.53.82 6.24 2.19c.48.38.76.97.76 1.58V19z"/></svg>
+      Equipos
+    </a>
+    <a href="#mantencion" class="nav-item" data-section="mantencion">
+      <svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>
+      Mantenimiento
+    </a>
+    <a href="#registros" class="nav-item" data-section="registros">
+      <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+      Registros
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="sidebar-update">
+      <div class="update-dot"></div>
+      <span id="lastUpdate">Actualizando...</span>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main" id="main">
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <button class="menu-toggle" onclick="toggleSidebar()">
+      <svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+    </button>
+    <div class="topbar-title">
+      <h1 id="pageTitle">Resumen General</h1>
+      <span id="pageSubtitle">Vista global de operaciones</span>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn-refresh" onclick="loadDashboard()" title="Actualizar datos">
+        <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+        Actualizar
+      </button>
+      <div class="topbar-date" id="topbarDate"></div>
+    </div>
+  </header>
+
+  <!-- LOADING STATE -->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-spinner"></div>
+    <p>Cargando datos de Firestore...</p>
+  </div>
+
+  <!-- CONTENT SECTIONS -->
+  <div class="content" id="content">
+
+    <!-- ====== SECCIÓN RESUMEN ====== -->
+    <section id="section-resumen" class="section active">
+
+      <!-- KPI Cards -->
+      <div class="kpi-grid">
+        <div class="kpi-card kpi-blue">
+          <div class="kpi-icon">
+            <svg viewBox="0 0 24 24"><path d="M19.77 7.23l.01-.01-3.72-3.72L15 4.56l2.11 2.11c-.94.36-1.61 1.26-1.61 2.33 0 1.38 1.12 2.5 2.5 2.5.36 0 .69-.08 1-.21v7.21c0 .55-.45 1-1 1s-1-.45-1-1V14c0-1.1-.9-2-2-2h-1V5c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2v16h10v-7.5h1.5v5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V9c0-.69-.28-1.32-.73-1.77zM8 18v-4.5H6L10 6v5h2l-4 7z"/></svg>
+          </div>
+          <div class="kpi-info">
+            <span class="kpi-label">Total Litros Distribuidos</span>
+            <span class="kpi-value" id="kpiTotalLitros">—</span>
+            <span class="kpi-unit">Litros</span>
+          </div>
+        </div>
+
+        <div class="kpi-card kpi-green">
+          <div class="kpi-icon">
+            <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 13H5v-.23c0-.62.28-1.2.76-1.58C7.47 15.82 9.64 15 12 15s4.53.82 6.24 2.19c.48.38.76.97.76 1.58V19z"/></svg>
+          </div>
+          <div class="kpi-info">
+            <span class="kpi-label">Equipos Activos</span>
+            <span class="kpi-value" id="kpiEquiposActivos">—</span>
+            <span class="kpi-unit">Unidades</span>
+          </div>
+        </div>
+
+        <div class="kpi-card kpi-gold">
+          <div class="kpi-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"/></svg>
+          </div>
+          <div class="kpi-info">
+            <span class="kpi-label">Combustible en Tanque</span>
+            <span class="kpi-value" id="kpiCombustibleActual">—</span>
+            <span class="kpi-unit">Litros disponibles</span>
+          </div>
+        </div>
+
+        <div class="kpi-card kpi-orange">
+          <div class="kpi-icon">
+            <svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg>
+          </div>
+          <div class="kpi-info">
+            <span class="kpi-label">Equipos en Mantención</span>
+            <span class="kpi-value" id="kpiEquiposMantencion">—</span>
+            <span class="kpi-unit">Requieren atención</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Charts row -->
+      <div class="charts-row">
+        <div class="chart-card chart-wide">
+          <div class="chart-header">
+            <h3>Distribución de Combustible por Equipo</h3>
+            <span class="chart-badge">Top equipos</span>
+          </div>
+          <div class="chart-body">
+            <canvas id="chartDistribucion"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>Estado de la Flota</h3>
+          </div>
+          <div class="chart-body chart-doughnut-wrapper">
+            <canvas id="chartEstadoFlota"></canvas>
+            <div class="doughnut-center" id="doughnutCenter">
+              <span class="dc-num" id="dcTotal">—</span>
+              <span class="dc-label">Total</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Alerts panel -->
+      <div class="alerts-panel" id="alertasPanel">
+        <div class="alerts-header">
+          <h3>
+            <svg viewBox="0 0 24 24"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+            Alertas Activas
+          </h3>
+          <span class="badge-red" id="badgeAlertas">0</span>
+        </div>
+        <div class="alerts-list" id="alertasList">
+          <p class="no-alerts">Cargando alertas...</p>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ====== SECCIÓN COMBUSTIBLE ====== -->
+    <section id="section-combustible" class="section">
+
+      <div class="tank-overview">
+        <div class="tank-card">
+          <div class="tank-header">
+            <h3>Tanque de Distribución</h3>
+            <div class="tank-status" id="tankStatusBadge">—</div>
+          </div>
+          <div class="tank-details">
+            <div class="tank-info-row">
+              <span class="tank-label">Patente:</span>
+              <span id="tankPatente">—</span>
+            </div>
+            <div class="tank-info-row">
+              <span class="tank-label">Modelo:</span>
+              <span id="tankModelo">—</span>
+            </div>
+            <div class="tank-info-row">
+              <span class="tank-label">Capacidad máxima:</span>
+              <span id="tankCapacidad">—</span>
+            </div>
+            <div class="tank-info-row">
+              <span class="tank-label">Combustible actual:</span>
+              <span id="tankActual" class="tank-value-highlight">—</span>
+            </div>
+            <div class="tank-info-row">
+              <span class="tank-label">Total distribuido:</span>
+              <span id="tankTotalDist">—</span>
+            </div>
+          </div>
+          <div class="tank-gauge-wrap">
+            <div class="tank-gauge-label">
+              <span>Nivel actual</span>
+              <span id="tankPct">—%</span>
+            </div>
+            <div class="tank-gauge-bar">
+              <div class="tank-gauge-fill" id="tankGaugeFill"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fuel-chart-card">
+          <div class="chart-header">
+            <h3>Últimas Distribuciones</h3>
+            <span class="chart-badge" id="badgeRegistros">—</span>
+          </div>
+          <div class="chart-body">
+            <canvas id="chartUltimas"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Registros recientes -->
+      <div class="table-card">
+        <div class="table-header">
+          <h3>Historial de Distribuciones</h3>
+          <input class="table-search" id="searchRecords" placeholder="Buscar equipo u operador…" oninput="filterRecords()" />
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="tableRecords">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Equipo</th>
+                <th>Patente</th>
+                <th>Litros</th>
+                <th>KM / Horas</th>
+                <th>Operador</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyRecords">
+              <tr><td colspan="6" class="td-loading">Cargando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ====== SECCIÓN EQUIPOS ====== -->
+    <section id="section-equipos" class="section">
+
+      <div class="filter-bar">
+        <button class="filter-btn active" data-filter="todos" onclick="filterEquipos(this)">Todos</button>
+        <button class="filter-btn" data-filter="activo" onclick="filterEquipos(this)">Activos</button>
+        <button class="filter-btn" data-filter="mantencion" onclick="filterEquipos(this)">En Mantención</button>
+        <button class="filter-btn" data-filter="fuera_servicio" onclick="filterEquipos(this)">Fuera de Servicio</button>
+        <input class="table-search ml-auto" id="searchEquipos" placeholder="Buscar equipo…" oninput="filterEquiposText()" />
+      </div>
+
+      <div class="equipos-grid" id="equiposGrid">
+        <p class="loading-text">Cargando equipos...</p>
+      </div>
+
+    </section>
+
+    <!-- ====== SECCIÓN MANTENIMIENTO ====== -->
+    <section id="section-mantencion" class="section">
+
+      <div class="charts-row">
+        <div class="chart-card">
+          <div class="chart-header">
+            <h3>Estado de Mantenimiento</h3>
+          </div>
+          <div class="chart-body">
+            <canvas id="chartMantencion"></canvas>
+          </div>
+        </div>
+        <div class="chart-card chart-wide">
+          <div class="chart-header">
+            <h3>% de Uso hacia Próxima Mantención</h3>
+            <span class="chart-badge">Top 10 equipos</span>
+          </div>
+          <div class="chart-body">
+            <canvas id="chartUsoMantencion"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <h3>Equipos que Requieren Atención</h3>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" id="tableMantencion">
+            <thead>
+              <tr>
+                <th>Equipo</th>
+                <th>Patente</th>
+                <th>Unidad</th>
+                <th>% Uso</th>
+                <th>Restante</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyMantencion">
+              <tr><td colspan="6" class="td-loading">Cargando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ====== SECCIÓN REGISTROS ====== -->
+    <section id="section-registros" class="section">
+      <div class="kpi-grid kpi-grid-3">
+        <div class="kpi-card kpi-blue">
+          <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg></div>
+          <div class="kpi-info">
+            <span class="kpi-label">Total Registros</span>
+            <span class="kpi-value" id="kpiTotalRegistros">—</span>
+            <span class="kpi-unit">distribuciones</span>
+          </div>
+        </div>
+        <div class="kpi-card kpi-green">
+          <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M19.77 7.23l.01-.01-3.72-3.72L15 4.56l2.11 2.11c-.94.36-1.61 1.26-1.61 2.33 0 1.38 1.12 2.5 2.5 2.5.36 0 .69-.08 1-.21v7.21c0 .55-.45 1-1 1s-1-.45-1-1V14c0-1.1-.9-2-2-2h-1V5c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2v16h10v-7.5h1.5v5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V9c0-.69-.28-1.32-.73-1.77zM8 18v-4.5H6L10 6v5h2l-4 7z"/></svg></div>
+          <div class="kpi-info">
+            <span class="kpi-label">Promedio por Registro</span>
+            <span class="kpi-value" id="kpiPromedioLitros">—</span>
+            <span class="kpi-unit">litros</span>
+          </div>
+        </div>
+        <div class="kpi-card kpi-gold">
+          <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg></div>
+          <div class="kpi-info">
+            <span class="kpi-label">Operadores Únicos</span>
+            <span class="kpi-value" id="kpiOperadores">—</span>
+            <span class="kpi-unit">registrados</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-header">
+          <h3>Todos los Registros de Distribución</h3>
+          <input class="table-search" id="searchAllRecords" placeholder="Buscar…" oninput="filterAllRecords()" />
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Equipo</th>
+                <th>Patente</th>
+                <th>Litros</th>
+                <th>KM/Horas</th>
+                <th>Operador</th>
+                <th>Notas</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyAllRecords">
+              <tr><td colspan="7" class="td-loading">Cargando...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+  </div><!-- /content -->
+</main>
+
+<script src="./app.js"></script>
+</body>
+</html>
