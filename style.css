@@ -642,3 +642,30 @@ body {
   .kpi-grid { grid-template-columns: 1fr; }
   .kpi-grid-3 { grid-template-columns: 1fr; }
 }
+
+/* ===== Badges de fuente de combustible ===== */
+.src-badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; }
+.src-cist  { background: var(--azul); }
+.src-copec { background: var(--naranja); }
+.src-ext   { background: #8E44AD; }
+
+/* ===== Badge de área de trabajo ===== */
+.area-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 8px;
+  font-size: 11px; font-weight: 600; color: var(--azul);
+  background: var(--azul-bg); white-space: nowrap;
+}
+
+/* ===== Tag PLUMA en tarjeta de equipo ===== */
+.pluma-tag {
+  background: var(--oro); color: #4a3a00; padding: 1px 6px;
+  border-radius: 6px; font-size: 10px; font-weight: 700; letter-spacing: .3px;
+}
+
+/* ===== Bloques de medidor por equipo (km / horómetro / pluma) ===== */
+.equipo-medidor { margin-top: 10px; }
+.equipo-medidor .equipo-progress-label {
+  display: flex; justify-content: space-between;
+  font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 4px;
+}
+.med-detail { font-size: 11px; color: var(--text-sm); margin-top: 3px; }
