@@ -9,13 +9,13 @@ let _equipos   = [];
 let _records   = [];
 let _tank      = null;
 let _refills   = [];   // recargas del tanque (tank_refills)
-let _operadores = [];  // catálogo de operadores
+let _returns   = [];   // devoluciones de externos (external_returns)
+let _precioLitro = 0;  // CLP por litro (config)
 let _equipoFilter = 'todos';
 
 // ---- Charts ----
 let chartDist      = null;
 let chartFlota     = null;
-let chartUltimas   = null;
 let chartMant      = null;
 let chartUsoMant   = null;
 let chartArea      = null;
@@ -31,10 +31,12 @@ function navigate(section) {
   });
 
   const titles = {
-    resumen:    ['Resumen General',          'Vista global de operaciones'],
-    combustible:['Control de Combustible',   'Distribución, niveles y recargas'],
+    resumen:    ['Resumen General',          'Lo importante de un vistazo'],
+    combustible:['Control de Combustible',   'Tanque, recargas y entregas'],
     equipos:    ['Gestión de Equipos',       'Estado y mantenimiento de la flota'],
     mantencion: ['Plan de Mantenimiento',    'Alertas y programación de servicios'],
+    documentos: ['Documentación',            'Vencimientos de certificaciones'],
+    externos:   ['Cuentas Externos (MLP)',   'Deuda de combustible por empresa'],
     registros:  ['Registros de Distribución','Historial completo de despachos'],
   };
   const [h1, sub] = titles[section] || ['Dashboard', ''];
@@ -228,12 +230,13 @@ async function loadDashboard() {
   try {
     const db = await waitForFirestore();
 
-    const [eqSnap, recSnap, tankSnap, refSnap, opSnap] = await Promise.all([
+    const [eqSnap, recSnap, tankSnap, refSnap, retSnap, cfgSnap] = await Promise.all([
       db.collection('equipos').get(),
       db.collection('fuel_records').orderBy('fecha', 'desc').get(),
       db.collection('fuel_tanks').limit(1).get(),
       db.collection('tank_refills').get().catch(() => ({ docs: [] })),
-      db.collection('operadores').get().catch(() => ({ docs: [] })),
+      db.collection('external_returns').get().catch(() => ({ docs: [] })),
+      db.collection('config').doc('precios').get().catch(() => null),
     ]);
 
     _equipos    = eqSnap.docs.map(d => d.data());
@@ -241,7 +244,8 @@ async function loadDashboard() {
     _tank       = tankSnap.docs.length ? tankSnap.docs[0].data() : null;
     _refills    = refSnap.docs.map(d => d.data())
                     .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
-    _operadores = opSnap.docs.map(d => d.data());
+    _returns    = retSnap.docs.map(d => d.data());
+    _precioLitro = (cfgSnap && cfgSnap.exists ? (cfgSnap.data().precioLitro || 0) : 0);
 
     renderAll();
 
@@ -265,34 +269,86 @@ function renderAll() {
   renderChartArea();
   renderAlerts();
   renderTankSection();
-  renderChartUltimas();
   renderChartRefills();
   renderTableRefills();
-  renderTableRecords();
   renderEquipos();
   renderMantencionSection();
+  renderDocumentos();
+  renderExternos();
   renderRegistrosSection();
 }
 
-// ---- KPIs (Resumen) ----
+// ─────────────────────────────────────────────────────────────────────────
+// Helpers de documentación y externos (datos nuevos del modelo).
+// ─────────────────────────────────────────────────────────────────────────
+
+// Documentos vencidos o por vencer (≤diasAviso) de todos los equipos.
+function alertasDocumentos(diasAviso = 14) {
+  const ahora = new Date();
+  const out = [];
+  _equipos.forEach(e => {
+    const docs = e.documentos || {};
+    Object.entries(docs).forEach(([nombre, info]) => {
+      // info puede ser string (formato viejo) o {vence, fotoUrl}.
+      const venceStr = (info && typeof info === 'object') ? info.vence : info;
+      if (!venceStr) return;
+      const vence = new Date(venceStr);
+      const dias = Math.ceil((vence - ahora) / 86400000);
+      if (dias <= diasAviso) {
+        out.push({ equipo: e.nombre, patente: e.patente, documento: nombre,
+                   vence, dias, vencido: dias < 0 });
+      }
+    });
+  });
+  return out.sort((a, b) => a.vence - b.vence);
+}
+
+// Saldo por empresa externa: entregado − devuelto (en litros) + valor $.
+function cuentasExternos() {
+  const entregado = {}, devuelto = {};
+  _records.forEach(r => {
+    if (!r.esExterno) return;
+    const emp = (r.empresaExterna || 'Sin empresa').trim();
+    entregado[emp] = (entregado[emp] || 0) + (r.litriosIngresados || 0);
+  });
+  _returns.forEach(d => {
+    const emp = (d.empresa || 'Sin empresa').trim();
+    devuelto[emp] = (devuelto[emp] || 0) + (d.litros || 0);
+  });
+  const empresas = [...new Set([...Object.keys(entregado), ...Object.keys(devuelto)])];
+  return empresas.map(emp => {
+    const ent = entregado[emp] || 0, dev = devuelto[emp] || 0;
+    const saldo = ent - dev;
+    return { empresa: emp, entregado: ent, devuelto: dev, saldo,
+             monto: saldo * _precioLitro };
+  }).sort((a, b) => b.saldo - a.saldo);
+}
+
+// ---- KPIs (Resumen): lo más accionable para jefatura ----
 function renderKPIs() {
-  // Total entregado = histórico real del tanque (incluye acumulado inicial).
+  // 1. Nivel del tanque (% + litros).
+  const pctTanque = _tank ? (_tank.combustibleActual / _tank.capacidadMaxima) * 100 : 0;
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+  setTxt('kpiTanquePct', _tank ? pctTanque.toFixed(0) + '%' : '—');
+  setTxt('kpiTanqueLt', _tank ? `${fmt(_tank.combustibleActual)} / ${fmt(_tank.capacidadMaxima)} Lt` : 'Sin tanque');
+
+  // 2. Total entregado histórico.
   const totalEntregado = _tank?.totalDistribuido
     ?? _records.reduce((s, r) => s + (r.litriosIngresados || 0), 0);
-  const activos        = _equipos.filter(e => e.estado === 'activo').length;
-  const combustible    = _tank?.combustibleActual ?? 0;
+  setTxt('kpiTotalLitros', fmt(totalEntregado));
 
-  const alertas = _equipos.filter(e => {
-    const pct = getPct(e);
-    return pct != null && pct >= 80;
-  });
-  const tanqueAlerta = _tank && (_tank.combustibleActual / _tank.capacidadMaxima) * 100 < 20;
-  const totalMantAlertas = alertas.length + (tanqueAlerta ? 1 : 0);
+  // 3. Equipos en alerta de mantención (≥80%).
+  const enAlerta = _equipos.filter(e => { const p = getPct(e); return p != null && p >= 80; }).length;
+  setTxt('kpiEquiposMantencion', enAlerta);
 
-  document.getElementById('kpiTotalLitros').textContent       = fmt(totalEntregado);
-  document.getElementById('kpiEquiposActivos').textContent    = activos;
-  document.getElementById('kpiCombustibleActual').textContent = fmt(combustible);
-  document.getElementById('kpiEquiposMantencion').textContent = totalMantAlertas;
+  // 4. Documentos vencidos / por vencer (≤14 días).
+  const docs = alertasDocumentos();
+  const vencidos = docs.filter(d => d.vencido).length;
+  setTxt('kpiDocsAlerta', docs.length);
+  setTxt('kpiDocsDetalle', docs.length === 0
+    ? 'Todo al día'
+    : `${vencidos} vencido(s) · ${docs.length - vencidos} por vencer`);
 }
 
 // ---- Chart: Distribución por equipo (apilado cisterna + COPEC) ----
@@ -401,13 +457,14 @@ function renderChartArea() {
   });
 }
 
-// ---- Alertas ----
+// ---- Alertas (mantención + tanque + documentos) ----
 function renderAlerts() {
   const urgentes = _equipos.filter(e => { const p = getPct(e); return p != null && p >= 100; });
   const proximos = _equipos.filter(e => { const p = getPct(e); return p != null && p >= 80 && p < 100; });
   const tankLow  = _tank && (_tank.combustibleActual / _tank.capacidadMaxima) * 100 < 20;
+  const docs     = alertasDocumentos();
 
-  const total = urgentes.length + proximos.length + (tankLow ? 1 : 0);
+  const total = urgentes.length + proximos.length + docs.length + (tankLow ? 1 : 0);
   document.getElementById('badgeAlertas').textContent = total;
 
   const list = document.getElementById('alertasList');
@@ -431,6 +488,16 @@ function renderAlerts() {
       `${e.patente} · ${m ? m.label + ' ' + (m.pct?.toFixed(0) ?? '—') + '%' : ''}`));
   });
 
+  // Documentos: vencidos (grave) y por vencer (leve).
+  docs.forEach(d => {
+    const sub = d.vencido
+      ? `${d.patente} · VENCIÓ ${d.vence.toLocaleDateString('es-CL')}`
+      : `${d.patente} · vence en ${d.dias} día(s) (${d.vence.toLocaleDateString('es-CL')})`;
+    items.push(alertHTML(d.vencido ? 'grave' : 'leve', 'doc',
+      d.vencido ? 'VENCIDO' : 'POR VENCER',
+      `${d.documento} · ${d.equipo}`, sub));
+  });
+
   proximos.forEach(e => {
     const m = getMedidorCritico(e);
     items.push(alertHTML('leve', 'schedule', 'LEVE',
@@ -446,6 +513,7 @@ function alertHTML(cls, iconName, nivel, titulo, sub) {
     local_gas: '<path d="M19.77 7.23l.01-.01-3.72-3.72L15 4.56l2.11 2.11c-.94.36-1.61 1.26-1.61 2.33 0 1.38 1.12 2.5 2.5 2.5.36 0 .69-.08 1-.21v7.21c0 .55-.45 1-1 1s-1-.45-1-1V14c0-1.1-.9-2-2-2h-1V5c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2v16h10v-7.5h1.5v5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V9c0-.69-.28-1.32-.73-1.77zM8 18v-4.5H6L10 6v5h2l-4 7z"/>',
     build:     '<path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/>',
     schedule:  '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/>',
+    doc:       '<path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>',
   }[iconName] || '';
 
   return `
@@ -484,38 +552,6 @@ function renderTankSection() {
   const badge = document.getElementById('tankStatusBadge');
   if (low) { badge.textContent = 'BAJO — Recarga urgente'; badge.classList.add('low'); }
   else     { badge.textContent = 'Normal'; badge.classList.remove('low'); }
-
-  document.getElementById('badgeRegistros').textContent = _records.length + ' registros';
-}
-
-// ---- Chart: Últimas distribuciones ----
-function renderChartUltimas() {
-  const last15 = [..._records].slice(0, 15).reverse();
-  const labels = last15.map(r => {
-    const d = new Date(r.fecha);
-    return d.toLocaleDateString('es-CL', { day:'2-digit', month:'2-digit' });
-  });
-  const data = last15.map(r => r.litriosIngresados || 0);
-
-  const ctx = document.getElementById('chartUltimas').getContext('2d');
-  if (chartUltimas) chartUltimas.destroy();
-  chartUltimas = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{ label: 'Litros despachados', data,
-        borderColor: '#003478', backgroundColor: 'rgba(0,52,120,0.08)',
-        borderWidth: 2, fill: true, tension: 0.4, pointRadius: 4, pointBackgroundColor: '#003478' }],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: { beginAtZero: true, grid: { color: '#F0F0F0' }, ticks: { callback: v => fmt(v) + ' Lt' } },
-        x: { grid: { display: false } },
-      },
-    },
-  });
 }
 
 // ---- Chart: Recargas del tanque (entradas) ----
@@ -558,44 +594,6 @@ function renderTableRefills() {
       <td>${fmtDate(r.fecha)}</td>
       <td><strong style="color:#27AE60">+${fmt(r.litros, 0)} Lt</strong></td>
       <td>${fmt(r.nivelResultante, 0)} Lt</td>
-      <td>${r.operador || '—'}</td>
-    </tr>`).join('');
-}
-
-// ---- Tabla: Registros (sección combustible) ----
-let _recordsFiltered = [];
-
-function renderTableRecords() {
-  _recordsFiltered = [..._records];
-  renderTbodyRecords();
-}
-
-function filterRecords() {
-  const q = document.getElementById('searchRecords').value.toLowerCase();
-  _recordsFiltered = _records.filter(r =>
-    (r.equipoNombre || '').toLowerCase().includes(q) ||
-    (r.operador     || '').toLowerCase().includes(q) ||
-    (r.equipoPatente || '').toLowerCase().includes(q) ||
-    (r.areaTrabajo  || '').toLowerCase().includes(q)
-  );
-  renderTbodyRecords();
-}
-
-function renderTbodyRecords() {
-  const tbody = document.getElementById('tbodyRecords');
-  if (!_recordsFiltered.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="td-loading">Sin registros</td></tr>';
-    return;
-  }
-  tbody.innerHTML = _recordsFiltered.slice(0, 50).map(r => `
-    <tr>
-      <td>${fmtDate(r.fecha)}</td>
-      <td>${r.equipoNombre || '—'}</td>
-      <td>${r.equipoPatente || '—'}</td>
-      <td><strong>${fmt(r.litriosIngresados, 1)} Lt</strong></td>
-      <td>${medidorRegistro(r)}</td>
-      <td>${areaBadge(r.areaTrabajo)}</td>
-      <td>${fuenteBadge(r)}</td>
       <td>${r.operador || '—'}</td>
     </tr>`).join('');
 }
@@ -833,6 +831,88 @@ function renderTbodyAllRecords() {
       <td>${r.operador || '—'}</td>
       <td style="max-width:140px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.notas || '—'}</td>
     </tr>`).join('');
+}
+
+// ---- Documentación section ----
+function renderDocumentos() {
+  const tbody = document.getElementById('tbodyDocumentos');
+  if (!tbody) return;
+  const ahora = new Date();
+
+  // Todos los documentos de todos los equipos, ordenados por vencimiento.
+  const filas = [];
+  _equipos.forEach(e => {
+    const docs = e.documentos || {};
+    Object.entries(docs).forEach(([nombre, info]) => {
+      const venceStr = (info && typeof info === 'object') ? info.vence : info;
+      const fotoUrl = (info && typeof info === 'object') ? info.fotoUrl : null;
+      if (!venceStr) return;
+      const vence = new Date(venceStr);
+      const dias = Math.ceil((vence - ahora) / 86400000);
+      const estado = dias < 0 ? 'vencido' : (dias <= 14 ? 'porVencer' : 'vigente');
+      filas.push({ equipo: e.nombre, patente: e.patente, nombre, vence, dias, estado, fotoUrl });
+    });
+  });
+  filas.sort((a, b) => a.vence - b.vence);
+
+  // KPIs de la sección.
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setTxt('kpiDocVencidos', filas.filter(f => f.estado === 'vencido').length);
+  setTxt('kpiDocPorVencer', filas.filter(f => f.estado === 'porVencer').length);
+  setTxt('kpiDocVigentes', filas.filter(f => f.estado === 'vigente').length);
+
+  if (!filas.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="td-loading">Sin documentación registrada</td></tr>';
+    return;
+  }
+
+  const badge = (estado) => {
+    if (estado === 'vencido') return '<span class="pct-badge pct-danger">VENCIDO</span>';
+    if (estado === 'porVencer') return '<span class="pct-badge pct-warn">POR VENCER</span>';
+    return '<span class="src-badge src-cist">VIGENTE</span>';
+  };
+
+  tbody.innerHTML = filas.map(f => `
+    <tr>
+      <td><strong>${f.equipo}</strong></td>
+      <td>${f.patente}</td>
+      <td>${f.nombre}</td>
+      <td>${f.vence.toLocaleDateString('es-CL')}${f.estado !== 'vencido' ? ` <small style="color:#888">(${f.dias}d)</small>` : ''}</td>
+      <td>${badge(f.estado)}${f.fotoUrl ? ` <a href="${f.fotoUrl}" target="_blank" style="margin-left:6px">📎</a>` : ''}</td>
+    </tr>`).join('');
+}
+
+// ---- Cuentas Externos (MLP) section ----
+function renderExternos() {
+  const tbody = document.getElementById('tbodyExternos');
+  if (!tbody) return;
+  const cuentas = cuentasExternos();
+
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const deudaTotal = cuentas.filter(c => c.saldo > 0).reduce((s, c) => s + c.saldo, 0);
+  setTxt('kpiDeudaLitros', fmt(deudaTotal) + ' Lt');
+  setTxt('kpiDeudaMonto', _precioLitro > 0 ? '$' + fmt(deudaTotal * _precioLitro) : '—');
+  setTxt('kpiEmpresasDeuda', cuentas.filter(c => c.saldo > 0).length);
+
+  if (!cuentas.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="td-loading">Sin entregas a externos</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = cuentas.map(c => {
+    const saldado = c.saldo <= 0;
+    const badge = saldado
+      ? '<span class="src-badge src-cist">AL DÍA</span>'
+      : '<span class="pct-badge pct-danger">DEBE</span>';
+    return `
+      <tr>
+        <td><strong>${c.empresa}</strong></td>
+        <td>${fmt(c.entregado)} Lt</td>
+        <td>${fmt(c.devuelto)} Lt</td>
+        <td><strong>${fmt(c.saldo < 0 ? 0 : c.saldo)} Lt</strong>${_precioLitro > 0 ? ` <small style="color:#888">($${fmt((c.saldo < 0 ? 0 : c.saldo) * _precioLitro)})</small>` : ''}</td>
+        <td>${badge}</td>
+      </tr>`;
+  }).join('');
 }
 
 // ---- Inicializar ----

@@ -233,6 +233,7 @@ body {
 .kpi-green  { border-left-color: var(--verde); }
 .kpi-gold   { border-left-color: var(--oro); }
 .kpi-orange { border-left-color: var(--naranja); }
+.kpi-red    { border-left-color: var(--rojo); }
 
 .kpi-icon {
   width: 48px; height: 48px;
@@ -244,12 +245,14 @@ body {
 .kpi-green  .kpi-icon { background: var(--verde-bg); }
 .kpi-gold   .kpi-icon { background: var(--oro-bg); }
 .kpi-orange .kpi-icon { background: var(--narj-bg); }
+.kpi-red    .kpi-icon { background: var(--rojo-bg); }
 
 .kpi-icon svg { width: 22px; height: 22px; }
 .kpi-blue   .kpi-icon svg { fill: var(--azul); }
 .kpi-green  .kpi-icon svg { fill: var(--verde); }
 .kpi-gold   .kpi-icon svg { fill: var(--oro); }
 .kpi-orange .kpi-icon svg { fill: var(--naranja); }
+.kpi-red    .kpi-icon svg { fill: var(--rojo); }
 
 .kpi-info { display: flex; flex-direction: column; min-width: 0; }
 .kpi-label { font-size: 11px; color: var(--text-sm); font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
