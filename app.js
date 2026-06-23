@@ -12,6 +12,8 @@ let _refills   = [];   // recargas del tanque (tank_refills)
 let _returns   = [];   // devoluciones de externos (external_returns)
 let _precioLitro = 0;  // CLP por litro (config)
 let _empresasIncluidas = []; // empresas externas incluidas en el proyecto (no se cobran)
+let _dailyReports = [];   // reportes diarios de operación (daily_reports)
+let _factoresConfig = {}; // clasificación de tareas {tareaId: {noOperativa, usoEfectivo}}
 let _equipoFilter = 'todos';
 let _grupoFilter = 'todos'; // filtro por grupo de equipos
 
@@ -41,6 +43,7 @@ function navigate(section) {
     documentos: ['Documentación',            'Vencimientos de certificaciones'],
     externos:   ['Cuentas Externos',         'Deuda de combustible por empresa'],
     registros:  ['Registros de Distribución','Historial completo de despachos'],
+    operacion:  ['Reportes Diarios',         'Horas trabajadas y factores por equipo'],
   };
   const [h1, sub] = titles[section] || ['Dashboard', ''];
   document.getElementById('pageTitle').textContent    = h1;
@@ -233,7 +236,7 @@ async function loadDashboard() {
   try {
     const db = await waitForFirestore();
 
-    const [eqSnap, recSnap, tankSnap, refSnap, retSnap, cfgSnap, extCfgSnap] = await Promise.all([
+    const [eqSnap, recSnap, tankSnap, refSnap, retSnap, cfgSnap, extCfgSnap, drSnap, facCfgSnap] = await Promise.all([
       db.collection('equipos').get(),
       db.collection('fuel_records').orderBy('fecha', 'desc').get(),
       db.collection('fuel_tanks').limit(1).get(),
@@ -241,6 +244,8 @@ async function loadDashboard() {
       db.collection('external_returns').get().catch(() => ({ docs: [] })),
       db.collection('config').doc('precios').get().catch(() => null),
       db.collection('config').doc('externos').get().catch(() => null),
+      db.collection('daily_reports').get().catch(() => ({ docs: [] })),
+      db.collection('config').doc('factores').get().catch(() => null),
     ]);
 
     _equipos    = eqSnap.docs.map(d => d.data());
@@ -253,6 +258,13 @@ async function loadDashboard() {
     _empresasIncluidas = (extCfgSnap && extCfgSnap.exists
       ? (extCfgSnap.data().empresasIncluidas || [])
       : []).map(s => String(s).trim());
+    _dailyReports = drSnap.docs.map(d => d.data());
+    // Clasificación de tareas. Si no hay config, el default de la app es
+    // Panne y Mantención como "no operativas".
+    const facData = (facCfgSnap && facCfgSnap.exists ? facCfgSnap.data() : null);
+    _factoresConfig = (facData && facData.clasificacion && Object.keys(facData.clasificacion).length)
+      ? facData.clasificacion
+      : { panne: { noOperativa: true }, mantencion: { noOperativa: true } };
 
     renderAll();
 
@@ -284,6 +296,7 @@ function renderAll() {
   renderDocumentos();
   renderExternos();
   renderRegistrosSection();
+  renderOperacion();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1023,6 +1036,100 @@ function renderExternos() {
         <td>${badge}</td>
       </tr>`;
   }).join('');
+}
+
+// ---- Reportes Diarios de Operación ----
+
+// Horas trabajadas de un reporte = (fin - inicio)/60 - colación (mín 0).
+function horasTrabajadasReporte(r) {
+  const jornada = ((r.finMinutos || 0) - (r.inicioMinutos || 0)) / 60;
+  const t = jornada - (r.colacionHoras != null ? r.colacionHoras : 1);
+  return t < 0 ? 0 : t;
+}
+
+// Factores (usadas / operativas / total) de una lista de reportes, según la
+// clasificación de tareas configurada. Espeja FactoresResultado.desde.
+function factoresDeReportes(reportes) {
+  let usadas = 0, noOp = 0, total = 0;
+  reportes.forEach(r => {
+    const desglose = r.desglose || {};
+    Object.entries(desglose).forEach(([tareaId, horas]) => {
+      const h = Number(horas) || 0;
+      const c = _factoresConfig[tareaId] || {};
+      total += h;
+      if (c.noOperativa) noOp += h;
+      if (c.usoEfectivo) usadas += h;
+    });
+  });
+  const operativas = total - noOp;
+  return {
+    usadas, operativas, total,
+    fu: operativas > 0 ? usadas / operativas : 0,
+    fo: total > 0 ? operativas / total : 0,
+    hayDatos: total > 0,
+  };
+}
+
+let _operacionQuery = '';
+function filterOperacion() {
+  _operacionQuery = (document.getElementById('searchOperacion')?.value || '').toLowerCase();
+  renderOperacion();
+}
+
+function renderOperacion() {
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+  // KPIs globales (todos los reportes).
+  const totalHoras = _dailyReports.reduce((s, r) => s + horasTrabajadasReporte(r), 0);
+  const fGlobal = factoresDeReportes(_dailyReports);
+  setTxt('kpiOpReportes', _dailyReports.length);
+  setTxt('kpiOpHoras', fmt(totalHoras, 1));
+  setTxt('kpiOpFU', fGlobal.hayDatos ? (fGlobal.fu * 100).toFixed(1) + '%' : '—');
+  setTxt('kpiOpFO', fGlobal.hayDatos ? (fGlobal.fo * 100).toFixed(1) + '%' : '—');
+
+  // Agrupar por equipo.
+  const porEquipo = {};
+  _dailyReports.forEach(r => {
+    (porEquipo[r.equipoId] ??= []).push(r);
+  });
+
+  let filas = Object.entries(porEquipo).map(([equipoId, reportes]) => {
+    const eq = _equipos.find(x => x.id === equipoId);
+    const nombre = eq ? eq.nombre : (reportes[0].equipoNombre || equipoId);
+    const patente = eq ? eq.patente : (reportes[0].equipoPatente || '—');
+    const horas = reportes.reduce((s, r) => s + horasTrabajadasReporte(r), 0);
+    const f = factoresDeReportes(reportes);
+    return { nombre, patente, n: reportes.length, horas, f };
+  }).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+
+  if (_operacionQuery) {
+    filas = filas.filter(x =>
+      x.nombre.toLowerCase().includes(_operacionQuery) ||
+      (x.patente || '').toLowerCase().includes(_operacionQuery));
+  }
+
+  const tbody = document.getElementById('tbodyOperacion');
+  if (!tbody) return;
+  if (!filas.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="td-loading">Sin reportes diarios registrados</td></tr>';
+    return;
+  }
+
+  const pctBadge = (v, hay) => {
+    if (!hay) return '<span class="src-badge src-cist">—</span>';
+    const p = (v * 100);
+    return `<span class="${p >= 80 ? 'pct-badge pct-warn' : 'src-badge src-cist'}">${p.toFixed(1)}%</span>`;
+  };
+
+  tbody.innerHTML = filas.map(x => `
+    <tr>
+      <td><strong>${x.nombre}</strong></td>
+      <td>${x.patente}</td>
+      <td>${x.n}</td>
+      <td>${fmt(x.horas, 1)} h</td>
+      <td>${pctBadge(x.f.fu, x.f.hayDatos)}</td>
+      <td>${pctBadge(x.f.fo, x.f.hayDatos)}</td>
+    </tr>`).join('');
 }
 
 // ---- Inicializar ----
