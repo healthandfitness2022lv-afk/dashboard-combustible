@@ -14,6 +14,7 @@ let _precioLitro = 0;  // CLP por litro (config)
 let _empresasIncluidas = []; // empresas externas incluidas en el proyecto (no se cobran)
 let _dailyReports = [];   // reportes diarios de operación (daily_reports)
 let _factoresConfig = {}; // clasificación de tareas {tareaId: {noOperativa, usoEfectivo}}
+let _maintenance = [];    // historial de mantenciones (maintenance_records)
 let _equipoFilter = 'todos';
 let _grupoFilter = 'todos'; // filtro por grupo de equipos
 
@@ -30,6 +31,7 @@ const TAREAS_OPERACION = {
   acreditacion: 'Acreditación',
   cambio_turno: 'Cambio de turno',
   desmovilizado: 'Desmovilizado',
+  operacion_horometro: 'Horómetro',
 };
 function etiquetaTarea(id) { return TAREAS_OPERACION[id] || id; }
 
@@ -252,7 +254,7 @@ async function loadDashboard() {
   try {
     const db = await waitForFirestore();
 
-    const [eqSnap, recSnap, tankSnap, refSnap, retSnap, cfgSnap, extCfgSnap, drSnap, facCfgSnap] = await Promise.all([
+    const [eqSnap, recSnap, tankSnap, refSnap, retSnap, cfgSnap, extCfgSnap, drSnap, facCfgSnap, mntSnap] = await Promise.all([
       db.collection('equipos').get(),
       db.collection('fuel_records').orderBy('fecha', 'desc').get(),
       db.collection('fuel_tanks').limit(1).get(),
@@ -262,6 +264,7 @@ async function loadDashboard() {
       db.collection('config').doc('externos').get().catch(() => null),
       db.collection('daily_reports').get().catch(() => ({ docs: [] })),
       db.collection('config').doc('factores').get().catch(() => null),
+      db.collection('maintenance_records').get().catch(() => ({ docs: [] })),
     ]);
 
     _equipos    = eqSnap.docs.map(d => d.data());
@@ -281,6 +284,8 @@ async function loadDashboard() {
     _factoresConfig = (facData && facData.clasificacion && Object.keys(facData.clasificacion).length)
       ? facData.clasificacion
       : { panne: { noOperativa: true }, mantencion: { noOperativa: true } };
+    _maintenance = mntSnap.docs.map(d => d.data())
+                    .sort((a, b) => new Date(b.fechaMantencion) - new Date(a.fechaMantencion));
 
     renderAll();
 
@@ -810,6 +815,44 @@ function renderMantencionSection() {
   renderChartMantencion();
   renderChartUsoMantencion();
   renderTableMantencion();
+  renderHistorialMantencion();
+}
+
+// Historial real de mantenciones realizadas (maintenance_records).
+function renderHistorialMantencion() {
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  const total = _maintenance.length;
+  const costoTotal = _maintenance.reduce((s, m) => s + (m.costo || 0), 0);
+  setTxt('kpiMntTotal', total);
+  setTxt('kpiMntCosto', costoTotal > 0 ? '$' + fmt(costoTotal) : '$0');
+
+  const tbody = document.getElementById('tbodyHistMant');
+  if (!tbody) return;
+  if (!_maintenance.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="td-loading">Sin mantenciones registradas</td></tr>';
+    return;
+  }
+
+  const tipoBadge = (t) => {
+    const cls = t === 'correctiva' ? 'pct-danger'
+              : t === 'preventiva' ? 'src-cist' : 'src-ext';
+    const tag = cls === 'src-cist' ? 'src-badge src-cist'
+              : cls === 'src-ext' ? 'src-badge src-ext' : 'pct-badge pct-danger';
+    return `<span class="${tag}">${(t || '—').toUpperCase()}</span>`;
+  };
+
+  tbody.innerHTML = _maintenance.slice(0, 100).map(m => {
+    const eq = _equipos.find(e => e.id === m.equipoId);
+    return `
+      <tr>
+        <td>${fmtDate(m.fechaMantencion)}</td>
+        <td><strong>${eq ? eq.nombre : (m.equipoId || '—')}</strong>${eq ? ` <small style="color:#888">${eq.patente}</small>` : ''}</td>
+        <td>${tipoBadge(m.tipo)}</td>
+        <td style="max-width:240px">${m.descripcion || '—'}</td>
+        <td>${m.responsable || '—'}</td>
+        <td><strong>${(m.costo || 0) > 0 ? '$' + fmt(m.costo) : '—'}</strong></td>
+      </tr>`;
+  }).join('');
 }
 
 function renderChartMantencion() {
@@ -1063,6 +1106,19 @@ function horasTrabajadasReporte(r) {
   return t < 0 ? 0 : t;
 }
 
+// ID reservado para las horas de máquina del horómetro de la jornada. Como en
+// la app, cuenta como uso efectivo por defecto aunque no esté en config/factores.
+const TAREA_HOROMETRO = 'operacion_horometro';
+
+// Clasificación de una tarea. Espeja FactoresConfig.clasificacionDe de la app:
+// el horómetro es uso efectivo si no hay una clasificación explícita.
+function clasificacionDe(tareaId) {
+  const c = _factoresConfig[tareaId];
+  if (c) return c;
+  if (tareaId === TAREA_HOROMETRO) return { usoEfectivo: true };
+  return {};
+}
+
 // Factores (usadas / operativas / total) de una lista de reportes, según la
 // clasificación de tareas configurada. Espeja FactoresResultado.desde.
 function factoresDeReportes(reportes) {
@@ -1071,7 +1127,7 @@ function factoresDeReportes(reportes) {
     const desglose = r.desglose || {};
     Object.entries(desglose).forEach(([tareaId, horas]) => {
       const h = Number(horas) || 0;
-      const c = _factoresConfig[tareaId] || {};
+      const c = clasificacionDe(tareaId);
       total += h;
       if (c.noOperativa) noOp += h;
       if (c.usoEfectivo) usadas += h;
@@ -1184,7 +1240,7 @@ function abrirModalOperacion(equipoIdEnc) {
   const dias = reportes.map(r => {
     const desglose = Object.entries(r.desglose || {}).sort((a, b) => b[1] - a[1]);
     const tags = desglose.map(([id, h]) => {
-      const c = _factoresConfig[id] || {};
+      const c = clasificacionDe(id);
       const cls = c.usoEfectivo ? 'uso' : (c.noOperativa ? 'no-op' : '');
       return `<span class="op-tag ${cls}">${etiquetaTarea(id)}: ${fmt(h, 1)} h</span>`;
     }).join('');
