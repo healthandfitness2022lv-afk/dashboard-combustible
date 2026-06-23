@@ -11,7 +11,9 @@ let _tank      = null;
 let _refills   = [];   // recargas del tanque (tank_refills)
 let _returns   = [];   // devoluciones de externos (external_returns)
 let _precioLitro = 0;  // CLP por litro (config)
+let _empresasIncluidas = []; // empresas externas incluidas en el proyecto (no se cobran)
 let _equipoFilter = 'todos';
+let _grupoFilter = 'todos'; // filtro por grupo de equipos
 
 // ---- Charts ----
 let chartDist      = null;
@@ -20,6 +22,7 @@ let chartMant      = null;
 let chartUsoMant   = null;
 let chartArea      = null;
 let chartRefills   = null;
+let chartGrupos    = null;
 
 // ---- Navegación ----
 function navigate(section) {
@@ -36,7 +39,7 @@ function navigate(section) {
     equipos:    ['Gestión de Equipos',       'Estado y mantenimiento de la flota'],
     mantencion: ['Plan de Mantenimiento',    'Alertas y programación de servicios'],
     documentos: ['Documentación',            'Vencimientos de certificaciones'],
-    externos:   ['Cuentas Externos (MLP)',   'Deuda de combustible por empresa'],
+    externos:   ['Cuentas Externos',         'Deuda de combustible por empresa'],
     registros:  ['Registros de Distribución','Historial completo de despachos'],
   };
   const [h1, sub] = titles[section] || ['Dashboard', ''];
@@ -230,13 +233,14 @@ async function loadDashboard() {
   try {
     const db = await waitForFirestore();
 
-    const [eqSnap, recSnap, tankSnap, refSnap, retSnap, cfgSnap] = await Promise.all([
+    const [eqSnap, recSnap, tankSnap, refSnap, retSnap, cfgSnap, extCfgSnap] = await Promise.all([
       db.collection('equipos').get(),
       db.collection('fuel_records').orderBy('fecha', 'desc').get(),
       db.collection('fuel_tanks').limit(1).get(),
       db.collection('tank_refills').get().catch(() => ({ docs: [] })),
       db.collection('external_returns').get().catch(() => ({ docs: [] })),
       db.collection('config').doc('precios').get().catch(() => null),
+      db.collection('config').doc('externos').get().catch(() => null),
     ]);
 
     _equipos    = eqSnap.docs.map(d => d.data());
@@ -246,6 +250,9 @@ async function loadDashboard() {
                     .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
     _returns    = retSnap.docs.map(d => d.data());
     _precioLitro = (cfgSnap && cfgSnap.exists ? (cfgSnap.data().precioLitro || 0) : 0);
+    _empresasIncluidas = (extCfgSnap && extCfgSnap.exists
+      ? (extCfgSnap.data().empresasIncluidas || [])
+      : []).map(s => String(s).trim());
 
     renderAll();
 
@@ -272,6 +279,7 @@ function renderAll() {
   renderChartRefills();
   renderTableRefills();
   renderEquipos();
+  renderChartGrupos();
   renderMantencionSection();
   renderDocumentos();
   renderExternos();
@@ -303,7 +311,12 @@ function alertasDocumentos(diasAviso = 14) {
   return out.sort((a, b) => a.vence - b.vence);
 }
 
+function empresaIncluida(emp) {
+  return _empresasIncluidas.includes((emp || '').trim());
+}
+
 // Saldo por empresa externa: entregado − devuelto (en litros) + valor $.
+// Las empresas "incluidas en el proyecto" se cargan pero NO se cobran (monto 0).
 function cuentasExternos() {
   const entregado = {}, devuelto = {};
   _records.forEach(r => {
@@ -319,8 +332,9 @@ function cuentasExternos() {
   return empresas.map(emp => {
     const ent = entregado[emp] || 0, dev = devuelto[emp] || 0;
     const saldo = ent - dev;
-    return { empresa: emp, entregado: ent, devuelto: dev, saldo,
-             monto: saldo * _precioLitro };
+    const incluida = empresaIncluida(emp);
+    return { empresa: emp, entregado: ent, devuelto: dev, saldo, incluida,
+             monto: incluida ? 0 : saldo * _precioLitro };
   }).sort((a, b) => b.saldo - a.saldo);
 }
 
@@ -608,12 +622,40 @@ function filterEquipos(btn) {
 
 function filterEquiposText() { renderEquipos(); }
 
+// Nombres de grupos existentes (equipos con grupo asignado), ordenados.
+function gruposEquipos() {
+  const set = new Set();
+  _equipos.forEach(e => { if (e.grupo && e.grupo.trim()) set.add(e.grupo.trim()); });
+  return [...set].sort((a, b) => a.localeCompare(b, 'es'));
+}
+
+// Llena el <select> de grupos (solo si hay grupos creados).
+function poblarSelectGrupos() {
+  const sel = document.getElementById('selectGrupo');
+  if (!sel) return;
+  const grupos = gruposEquipos();
+  sel.style.display = grupos.length ? '' : 'none';
+  const actual = _grupoFilter;
+  sel.innerHTML = '<option value="todos">Todos los grupos</option>' +
+    grupos.map(g => `<option value="${g}">${g}</option>`).join('');
+  // Conserva la selección si sigue existiendo.
+  sel.value = grupos.includes(actual) ? actual : 'todos';
+  if (sel.value !== actual) _grupoFilter = sel.value;
+}
+
+function filterEquiposGrupo(sel) {
+  _grupoFilter = sel.value;
+  renderEquipos();
+}
+
 function renderEquipos() {
+  poblarSelectGrupos();
   const q = (document.getElementById('searchEquipos')?.value || '').toLowerCase();
   const grid = document.getElementById('equiposGrid');
 
   let lista = [..._equipos];
   if (_equipoFilter !== 'todos') lista = lista.filter(e => e.estado === _equipoFilter);
+  if (_grupoFilter !== 'todos') lista = lista.filter(e => (e.grupo || '').trim() === _grupoFilter);
   if (q) {
     lista = lista.filter(e =>
       (e.nombre  || '').toLowerCase().includes(q) ||
@@ -671,11 +713,67 @@ function renderEquipos() {
         </div>
         <div class="equipo-info">
           <span>Tipo: ${e.tipo || '—'}</span>
+          ${(e.grupo && e.grupo.trim()) ? `<span>Grupo: ${e.grupo.trim()}</span>` : ''}
           ${(e.marca || e.modelo) ? `<span>Marca/Modelo: ${e.marca || ''} ${e.modelo || ''}</span>` : ''}
         </div>
         ${bloques}
       </div>`;
   }).join('');
+}
+
+// ---- Chart: Combustible por Grupo / Flota ----
+// Equipos sin grupo y registros externos se contabilizan en "Externos",
+// igual que en la app.
+function renderChartGrupos() {
+  const row = document.getElementById('rowGrupos');
+  const ctx = document.getElementById('chartGrupos');
+  if (!ctx) return;
+
+  const grupos = gruposEquipos();
+  if (!grupos.length) {              // sin grupos creados: oculta la fila
+    if (row) row.style.display = 'none';
+    if (chartGrupos) { chartGrupos.destroy(); chartGrupos = null; }
+    return;
+  }
+  if (row) row.style.display = '';
+
+  const grupoDe = {};
+  _equipos.forEach(e => { grupoDe[e.id] = (e.grupo && e.grupo.trim()) ? e.grupo.trim() : 'Externos'; });
+
+  const porGrupo = {};
+  _records.forEach(r => {
+    if (r.esExterno) {
+      porGrupo['Externos'] = (porGrupo['Externos'] || 0) + (r.litriosIngresados || 0);
+      return;
+    }
+    const g = grupoDe[r.equipoId] || 'Externos';
+    porGrupo[g] = (porGrupo[g] || 0) + (r.litriosIngresados || 0);
+  });
+
+  const entradas = Object.entries(porGrupo).sort((a, b) => b[1] - a[1]);
+  const paleta = ['#003478', '#F39C12', '#27AE60', '#8E44AD', '#16A085', '#E74C3C', '#95A5A6'];
+
+  if (chartGrupos) chartGrupos.destroy();
+  chartGrupos = new Chart(ctx.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: entradas.map(e => e[0]),
+      datasets: [{ label: 'Litros', data: entradas.map(e => Math.round(e[1])),
+        backgroundColor: entradas.map((_, i) => paleta[i % paleta.length]),
+        borderRadius: 6, borderSkipped: false }],
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${fmt(c.parsed.x)} Lt` } },
+      },
+      scales: {
+        x: { beginAtZero: true, grid: { color: '#F0F0F0' }, ticks: { callback: v => fmt(v) + ' Lt' } },
+        y: { grid: { display: false } },
+      },
+    },
+  });
 }
 
 // ---- Mantencion section ----
@@ -787,8 +885,12 @@ function renderRegistrosSection() {
                                   .reduce((s, r) => s + (r.litriosIngresados || 0), 0);
   const litrosCopec    = _records.filter(r => r.fuente === 'copec')
                                   .reduce((s, r) => s + (r.litriosIngresados || 0), 0);
-  const litrosExterno  = _records.filter(r => r.esExterno)
+  const externoEntregado = _records.filter(r => r.esExterno)
                                   .reduce((s, r) => s + (r.litriosIngresados || 0), 0);
+  // Devoluciones físicas de combustible (no pagos en dinero) bajan el neto.
+  const externoDevuelto = _returns.filter(d => (d.tipo || 'combustible') === 'combustible')
+                                  .reduce((s, d) => s + (d.litros || 0), 0);
+  const litrosExterno = Math.max(0, externoEntregado - externoDevuelto);
 
   document.getElementById('kpiTotalRegistros').textContent = total;
   document.getElementById('kpiLitrosCisterna').textContent = fmt(litrosCisterna, 0);
@@ -882,17 +984,19 @@ function renderDocumentos() {
     </tr>`).join('');
 }
 
-// ---- Cuentas Externos (MLP) section ----
+// ---- Cuentas Externos section ----
 function renderExternos() {
   const tbody = document.getElementById('tbodyExternos');
   if (!tbody) return;
   const cuentas = cuentasExternos();
 
   const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  const deudaTotal = cuentas.filter(c => c.saldo > 0).reduce((s, c) => s + c.saldo, 0);
+  // Solo cuentan como deuda las empresas que SÍ se cobran (no incluidas).
+  const conDeuda = cuentas.filter(c => c.saldo > 0 && !c.incluida);
+  const deudaTotal = conDeuda.reduce((s, c) => s + c.saldo, 0);
   setTxt('kpiDeudaLitros', fmt(deudaTotal) + ' Lt');
   setTxt('kpiDeudaMonto', _precioLitro > 0 ? '$' + fmt(deudaTotal * _precioLitro) : '—');
-  setTxt('kpiEmpresasDeuda', cuentas.filter(c => c.saldo > 0).length);
+  setTxt('kpiEmpresasDeuda', conDeuda.length);
 
   if (!cuentas.length) {
     tbody.innerHTML = '<tr><td colspan="5" class="td-loading">Sin entregas a externos</td></tr>';
@@ -901,15 +1005,21 @@ function renderExternos() {
 
   tbody.innerHTML = cuentas.map(c => {
     const saldado = c.saldo <= 0;
-    const badge = saldado
-      ? '<span class="src-badge src-cist">AL DÍA</span>'
-      : '<span class="pct-badge pct-danger">DEBE</span>';
+    const badge = c.incluida
+      ? '<span class="src-badge src-ext">INCLUIDO</span>'
+      : (saldado
+          ? '<span class="src-badge src-cist">AL DÍA</span>'
+          : '<span class="pct-badge pct-danger">DEBE</span>');
+    // En incluidas no se muestra valor $ (no se cobran).
+    const saldoCol = c.incluida
+      ? `<strong>${fmt(c.saldo < 0 ? 0 : c.saldo)} Lt</strong> <small style="color:#888">(no se cobra)</small>`
+      : `<strong>${fmt(c.saldo < 0 ? 0 : c.saldo)} Lt</strong>${_precioLitro > 0 ? ` <small style="color:#888">($${fmt((c.saldo < 0 ? 0 : c.saldo) * _precioLitro)})</small>` : ''}`;
     return `
       <tr>
         <td><strong>${c.empresa}</strong></td>
         <td>${fmt(c.entregado)} Lt</td>
         <td>${fmt(c.devuelto)} Lt</td>
-        <td><strong>${fmt(c.saldo < 0 ? 0 : c.saldo)} Lt</strong>${_precioLitro > 0 ? ` <small style="color:#888">($${fmt((c.saldo < 0 ? 0 : c.saldo) * _precioLitro)})</small>` : ''}</td>
+        <td>${saldoCol}</td>
         <td>${badge}</td>
       </tr>`;
   }).join('');
