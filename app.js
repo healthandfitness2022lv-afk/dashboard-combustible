@@ -17,6 +17,22 @@ let _factoresConfig = {}; // clasificación de tareas {tareaId: {noOperativa, us
 let _equipoFilter = 'todos';
 let _grupoFilter = 'todos'; // filtro por grupo de equipos
 
+// Catálogo de tareas: id -> etiqueta (debe coincidir con tareas_operacion.dart).
+const TAREAS_OPERACION = {
+  panne: 'Panne',
+  mantencion: 'Mantención',
+  condicion_climatica: 'Condición climática',
+  disponible_sin_operador: 'Disponible sin operador',
+  disponible_con_postura: 'Disponible con postura',
+  detencion_op_mlp: 'Detención op de MLP',
+  detencion_documental: 'Detención documental',
+  disponible_sin_postura: 'Disponible sin postura',
+  acreditacion: 'Acreditación',
+  cambio_turno: 'Cambio de turno',
+  desmovilizado: 'Desmovilizado',
+};
+function etiquetaTarea(id) { return TAREAS_OPERACION[id] || id; }
+
 // ---- Charts ----
 let chartDist      = null;
 let chartFlota     = null;
@@ -1099,7 +1115,7 @@ function renderOperacion() {
     const patente = eq ? eq.patente : (reportes[0].equipoPatente || '—');
     const horas = reportes.reduce((s, r) => s + horasTrabajadasReporte(r), 0);
     const f = factoresDeReportes(reportes);
-    return { nombre, patente, n: reportes.length, horas, f };
+    return { equipoId, nombre, patente, n: reportes.length, horas, f };
   }).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
 
   if (_operacionQuery) {
@@ -1122,7 +1138,7 @@ function renderOperacion() {
   };
 
   tbody.innerHTML = filas.map(x => `
-    <tr>
+    <tr class="row-click" onclick="abrirModalOperacion('${encodeURIComponent(x.equipoId)}')" title="Ver detalle">
       <td><strong>${x.nombre}</strong></td>
       <td>${x.patente}</td>
       <td>${x.n}</td>
@@ -1131,6 +1147,80 @@ function renderOperacion() {
       <td>${pctBadge(x.f.fo, x.f.hayDatos)}</td>
     </tr>`).join('');
 }
+
+// ---- Modal: detalle de reportes diarios de un equipo ----
+function fmtMinHora(m) {
+  m = m || 0;
+  return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+}
+
+function abrirModalOperacion(equipoIdEnc) {
+  const equipoId = decodeURIComponent(equipoIdEnc);
+  const reportes = _dailyReports
+    .filter(r => r.equipoId === equipoId)
+    .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  if (!reportes.length) return;
+
+  const eq = _equipos.find(x => x.id === equipoId);
+  const nombre = eq ? eq.nombre : (reportes[0].equipoNombre || equipoId);
+  const patente = eq ? eq.patente : (reportes[0].equipoPatente || '—');
+  const horas = reportes.reduce((s, r) => s + horasTrabajadasReporte(r), 0);
+  const f = factoresDeReportes(reportes);
+
+  document.getElementById('modalOpTitulo').textContent = nombre;
+  document.getElementById('modalOpSub').textContent =
+    `${patente} · ${reportes.length} reporte(s) · ${fmt(horas, 1)} h trabajadas`;
+
+  const factColor = (p) => p >= 0.8 ? 'var(--verde)' : p >= 0.5 ? 'var(--naranja)' : 'var(--rojo)';
+  const factBox = (label, val, hay) => `
+    <div class="fact-box">
+      <div class="fact-label">${label}</div>
+      <div class="fact-val" style="color:${hay ? factColor(val) : 'var(--text-sm)'}">
+        ${hay ? (val * 100).toFixed(1) + '%' : '—'}
+      </div>
+      <div class="fact-bar"><div style="width:${hay ? Math.min(val * 100, 100) : 0}%;background:${factColor(val)}"></div></div>
+    </div>`;
+
+  const dias = reportes.map(r => {
+    const desglose = Object.entries(r.desglose || {}).sort((a, b) => b[1] - a[1]);
+    const tags = desglose.map(([id, h]) => {
+      const c = _factoresConfig[id] || {};
+      const cls = c.usoEfectivo ? 'uso' : (c.noOperativa ? 'no-op' : '');
+      return `<span class="op-tag ${cls}">${etiquetaTarea(id)}: ${fmt(h, 1)} h</span>`;
+    }).join('');
+    const fecha = new Date(r.fecha).toLocaleDateString('es-CL', { day:'2-digit', month:'2-digit', year:'numeric' });
+    return `
+      <div class="op-day">
+        <div class="op-day-head">
+          <span>${fecha}</span>
+          <span class="op-day-time">${fmtMinHora(r.inicioMinutos)}–${fmtMinHora(r.finMinutos)} · ${fmt(horasTrabajadasReporte(r), 1)} h</span>
+        </div>
+        <div class="op-tags">${tags || '<span class="op-notas">Sin desglose</span>'}</div>
+        ${r.notas ? `<div class="op-notas">📝 ${r.notas}</div>` : ''}
+        ${r.operador ? `<div class="op-notas">Op: ${r.operador}</div>` : ''}
+      </div>`;
+  }).join('');
+
+  document.getElementById('modalOpBody').innerHTML = `
+    <div class="fact-row">
+      ${factBox('Utilización (FU)', f.fu, f.hayDatos)}
+      ${factBox('Operabilidad (FO)', f.fo, f.hayDatos)}
+    </div>
+    ${dias}`;
+
+  document.getElementById('modalOperacion').classList.add('open');
+}
+
+function cerrarModalOperacion(e) {
+  // Si se llama por click en el overlay, solo cierra si el click fue en el fondo.
+  if (e && e.target && e.target.id !== 'modalOperacion' && e.type === 'click') return;
+  document.getElementById('modalOperacion').classList.remove('open');
+}
+
+// Cerrar el modal con la tecla Escape.
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') cerrarModalOperacion();
+});
 
 // ---- Inicializar ----
 updateTopbarDate();

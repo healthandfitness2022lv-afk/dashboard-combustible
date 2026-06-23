@@ -672,3 +672,100 @@ body {
   font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 4px;
 }
 .med-detail { font-size: 11px; color: var(--text-sm); margin-top: 3px; }
+
+/* ======= MODAL (detalle reportes diarios) ======= */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 300;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+.modal-overlay.open { display: flex; }
+.modal-box {
+  background: var(--white);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 48px rgba(0,0,0,0.25);
+  width: 100%;
+  max-width: 680px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalIn 0.18s ease-out;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--gris-bd);
+  background: var(--azul);
+  color: #fff;
+}
+.modal-header h3 { font-size: 16px; font-weight: 700; }
+.modal-sub { font-size: 12px; opacity: 0.85; }
+.modal-close {
+  border: none;
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.modal-close:hover { background: rgba(255,255,255,0.3); }
+.modal-close svg { width: 20px; height: 20px; fill: #fff; }
+.modal-body { padding: 18px 20px; overflow-y: auto; }
+
+/* Tarjeta de factores dentro del modal */
+.fact-row { display: flex; gap: 16px; margin-bottom: 16px; }
+.fact-box {
+  flex: 1;
+  background: var(--gris);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.fact-box .fact-label { font-size: 11px; color: var(--text-sm); }
+.fact-box .fact-val { font-size: 22px; font-weight: 700; }
+.fact-bar { height: 6px; border-radius: 4px; background: var(--gris-bd); margin-top: 6px; overflow: hidden; }
+.fact-bar > div { height: 100%; border-radius: 4px; }
+
+/* Bloque por reporte (día) */
+.op-day {
+  border: 1px solid var(--gris-bd);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.op-day-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px; font-weight: 600; margin-bottom: 8px;
+}
+.op-day-head .op-day-time { font-size: 11px; color: var(--text-sm); font-weight: 500; }
+.op-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.op-tag {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--azul-bg);
+  color: var(--azul);
+  font-weight: 500;
+}
+.op-tag.no-op { background: var(--rojo-bg); color: var(--rojo); }
+.op-tag.uso   { background: var(--verde-bg); color: var(--verde); }
+.op-notas { font-size: 11px; color: var(--text-sm); margin-top: 8px; }
+
+/* Filas clickeables */
+.row-click { cursor: pointer; }
+.row-click:hover { background: var(--azul-bg); }
