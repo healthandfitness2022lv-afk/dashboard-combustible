@@ -1566,26 +1566,48 @@ function abrirDetalleFactor(x) {
     </div>`;
   document.getElementById('modalOperacion').classList.add('open');
 
-  // Dona con las horas de cada tarea.
-  const orden = tareas.sort((a, b) => b[1] - a[1]);
+  // Dona con las horas de cada tarea, AGRUPADA por tipo y con un separador
+  // transparente entre grupos para distinguir cuánto pesa cada grupo.
   if (chartDetalleFactor) chartDetalleFactor.destroy();
   const cv = document.getElementById('canvasDetalleFactor');
   if (cv) {
+    const labels = [];
+    const data = [];
+    const colors = [];
+    // Tamaño del separador: ~3% del total (proporcional para que se note igual).
+    const sep = (x.total || 1) * 0.03;
+    const ordenGrupos = ['usado', 'operativo', 'noop'];
+    ordenGrupos.forEach((gk, gi) => {
+      const g = grupos[gk];
+      if (!g.tareas.length) return;
+      // Separador antes de cada grupo (excepto el primero con datos).
+      if (data.length > 0) {
+        labels.push('__sep'); data.push(sep); colors.push('rgba(0,0,0,0)');
+      }
+      g.tareas.sort((a, b) => b[1] - a[1]).forEach(([id, h]) => {
+        labels.push(etiquetaTarea(id)); data.push(+h.toFixed(1)); colors.push(colorTarea(id));
+      });
+    });
+
     chartDetalleFactor = new Chart(cv.getContext('2d'), {
       type: 'doughnut',
-      data: {
-        labels: orden.map(([id]) => etiquetaTarea(id)),
-        datasets: [{
-          data: orden.map(([, h]) => +h.toFixed(1)),
-          backgroundColor: orden.map(([id]) => colorTarea(id)),
-          borderWidth: 1, borderColor: '#fff',
-        }],
-      },
+      data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 1, borderColor: '#fff' }] },
       options: {
         responsive: true, maintainAspectRatio: false, cutout: '55%',
         plugins: {
-          legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 }, padding: 6 } },
-          tooltip: { callbacks: { label: c => `${c.label}: ${c.parsed} h` } },
+          legend: {
+            position: 'bottom',
+            labels: {
+              boxWidth: 10, font: { size: 10 }, padding: 6,
+              // Oculta los separadores de la leyenda.
+              filter: (item) => item.text !== '__sep',
+            },
+          },
+          tooltip: {
+            // Ignora los separadores en el tooltip.
+            filter: (item) => item.label !== '__sep',
+            callbacks: { label: c => `${c.label}: ${c.parsed} h` },
+          },
         },
       },
     });
