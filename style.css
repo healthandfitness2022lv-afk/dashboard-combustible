@@ -799,3 +799,29 @@ body {
   padding-left: 6px !important;
   background: #fafafa;
 }
+
+/* ======= Detalle de factores (modal) ======= */
+.det-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.det-chart { height: 260px; }
+.det-grupos { display: flex; flex-direction: column; gap: 12px; }
+.det-grupo { border: 1px solid var(--gris-bd); border-radius: 10px; overflow: hidden; }
+.det-grupo-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 10px; background: var(--gris); font-size: 13px;
+}
+.det-tarea {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 10px; font-size: 12px; border-top: 1px solid #f0f0f0; color: var(--text);
+}
+.det-dot {
+  display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+  margin-right: 6px; vertical-align: middle;
+}
+@media (max-width: 640px) {
+  .det-grid { grid-template-columns: 1fr; }
+}

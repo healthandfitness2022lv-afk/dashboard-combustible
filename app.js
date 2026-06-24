@@ -31,7 +31,7 @@ const TAREAS_OPERACION = {
   acreditacion: 'Acreditación',
   cambio_turno: 'Cambio de turno',
   desmovilizado: 'Desmovilizado',
-  operacion_horometro: 'Horómetro',
+  operacion_horometro: 'Hrs máquina',
 };
 function etiquetaTarea(id) { return TAREAS_OPERACION[id] || id; }
 
@@ -1434,59 +1434,35 @@ function _renderChartDesglose(filas) {
   // Etiqueta en 2 líneas: nombre + patente (hay nombres repetidos).
   const labels = filas.map(x => x.patente ? [x.nombre, x.patente] : x.nombre);
 
-  // Conjunto de tareas presentes en algún equipo.
-  const tareasPresentes = [];
-  filas.forEach(x => Object.keys(x.horas).forEach(id => {
-    if (!tareasPresentes.includes(id)) tareasPresentes.push(id);
-  }));
-  // Ordenar: tareas OPERATIVAS primero (van ABAJO en el apilado) y las NO
-  // operativas al final (arriba). Así el corte operativo/no-operativo de cada
-  // barra coincide con su FO.
-  tareasPresentes.sort((a, b) => {
-    const na = clasificacionDe(a).noOperativa ? 1 : 0;
-    const nb = clasificacionDe(b).noOperativa ? 1 : 0;
-    return na - nb;
-  });
-
-  // Un dataset apilado por tarea: valor = % del total del equipo.
-  const datasetsTareas = tareasPresentes.map(id => ({
-    label: etiquetaTarea(id),
-    data: filas.map(x => x.total > 0 ? +(((x.horas[id] || 0) / x.total) * 100).toFixed(1) : 0),
-    backgroundColor: colorTarea(id),
-    stack: 'tiempo',
-    borderWidth: 0,
-    order: 1, // las barras por debajo de la línea
-  }));
-
-  // FO por equipo (%), para dibujar el corte por barra.
+  // Tres bloques por equipo (todos como % del total, suman 100):
+  //  - Utilizado      = usadas ÷ total           (verde)
+  //  - Operativo libre = operativo − utilizado    (azul)  → disponible no usado
+  //  - No operativo   = 100 − operativo           (rojo)  → Panne, Mantención…
+  const usado = filas.map(x => x.total > 0 ? (x.f.usadas / x.total) * 100 : 0);
+  const operativoTot = filas.map(x => x.total > 0 ? (x.f.operativas / x.total) * 100 : 0);
   const fos = filas.map(x => +(x.f.fo * 100).toFixed(1));
 
-  // Plugin: por cada barra, una "tapa" negra gruesa del ancho de la columna a
-  // la altura de su FO. De ahí hacia arriba el equipo NO estuvo operativo.
-  const corteOperativoPlugin = {
-    id: 'corteOperativo',
-    afterDatasetsDraw(chart) {
-      const { ctx, scales: { y } } = chart;
-      // Ancho de barra: lo tomamos del primer dataset de barras visible.
-      const meta = chart.getDatasetMeta(0);
-      ctx.save();
-      ctx.strokeStyle = '#111';
-      ctx.lineWidth = 3;
-      ctx.lineCap = 'round';
-      fos.forEach((fo, i) => {
-        const el = meta.data[i];
-        if (!el) return;
-        const w = (el.width || 18) * 0.95;
-        const cx = el.x;
-        const cy = y.getPixelForValue(fo);
-        ctx.beginPath();
-        ctx.moveTo(cx - w / 2, cy);
-        ctx.lineTo(cx + w / 2, cy);
-        ctx.stroke();
-      });
-      ctx.restore();
+  const r1 = (n) => +n.toFixed(1);
+  const datasetsTareas = [
+    {
+      label: 'Utilizado',
+      data: usado.map(r1),
+      backgroundColor: '#27AE60',
+      stack: 'tiempo', borderWidth: 0,
     },
-  };
+    {
+      label: 'Operativo no usado',
+      data: filas.map((_, i) => r1(Math.max(0, operativoTot[i] - usado[i]))),
+      backgroundColor: '#5DADE2',
+      stack: 'tiempo', borderWidth: 0,
+    },
+    {
+      label: 'No operativo',
+      data: filas.map((_, i) => r1(Math.max(0, 100 - operativoTot[i]))),
+      backgroundColor: '#E74C3C',
+      stack: 'tiempo', borderWidth: 0,
+    },
+  ];
 
   chartDesglose = new Chart(ctx.getContext('2d'), {
     type: 'bar',
@@ -1495,28 +1471,125 @@ function _renderChartDesglose(filas) {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'bottom', labels: { boxWidth: 11, font: { size: 10 }, padding: 8 } },
+        legend: {
+          position: 'bottom',
+          labels: { boxWidth: 11, font: { size: 11 }, padding: 10 },
+        },
         tooltip: {
-          // Mostrar solo las series con valor > 0.
           filter: (item) => item.parsed.y > 0,
           callbacks: {
             label: c => `${c.dataset.label}: ${c.parsed.y}%`,
             afterBody: (items) => {
               const i = items.length ? items[0].dataIndex : -1;
-              return i >= 0 ? `── Operativo (FO): ${fos[i]}%` : '';
+              if (i < 0) return '';
+              return `FO ${fos[i]}%  ·  FU ${(filas[i].f.fu * 100).toFixed(1)}%`;
             },
           },
         },
       },
       scales: {
         y: { beginAtZero: true, max: 100, stacked: true, grid: { color: '#F0F0F0' },
-             ticks: { callback: v => v + '%' } },
+             ticks: { stepSize: 20, callback: v => v + '%' } },
         x: { stacked: true, grid: { display: false },
              ticks: { font: { size: 10 }, maxRotation: 60, minRotation: 45 } },
       },
+      onClick: (evt, els) => {
+        if (!els.length) return;
+        abrirDetalleFactor(filas[els[0].index]);
+      },
     },
-    plugins: [corteOperativoPlugin],
   });
+}
+
+let chartDetalleFactor = null;
+
+// Clasifica una tarea en uno de los 3 grupos del análisis.
+function grupoTarea(id) {
+  const c = clasificacionDe(id);
+  if (c.noOperativa) return 'noop';      // No operativo
+  if (c.usoEfectivo) return 'usado';     // Utilizado
+  return 'operativo';                    // Operativo no usado (disponible)
+}
+
+// Modal con el detalle de un equipo: 3 grupos con sus tareas + dona de horas.
+function abrirDetalleFactor(x) {
+  if (!x) return;
+  const fo = (x.f.fo * 100).toFixed(1);
+  const fu = (x.f.fu * 100).toFixed(1);
+
+  // Tareas (con horas > 0) agrupadas.
+  const tareas = Object.entries(x.horas).filter(([, h]) => h > 0);
+  const grupos = {
+    usado:     { label: 'Utilizado',          color: '#27AE60', tareas: [], horas: 0 },
+    operativo: { label: 'Operativo no usado', color: '#5DADE2', tareas: [], horas: 0 },
+    noop:      { label: 'No operativo',       color: '#E74C3C', tareas: [], horas: 0 },
+  };
+  tareas.forEach(([id, h]) => {
+    const g = grupos[grupoTarea(id)];
+    g.tareas.push([id, h]);
+    g.horas += h;
+  });
+
+  // HTML de cada grupo con sus tareas.
+  const bloque = (g) => {
+    if (g.tareas.length === 0) return '';
+    const filasTareas = g.tareas
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, h]) => {
+        const pct = x.total > 0 ? (h / x.total * 100).toFixed(1) : '0';
+        return `<div class="det-tarea">
+          <span><span class="det-dot" style="background:${colorTarea(id)}"></span>${etiquetaTarea(id)}</span>
+          <span>${h.toFixed(1)} h · ${pct}%</span>
+        </div>`;
+      }).join('');
+    const pctG = x.total > 0 ? (g.horas / x.total * 100).toFixed(1) : '0';
+    return `<div class="det-grupo">
+      <div class="det-grupo-head" style="border-left:4px solid ${g.color}">
+        <span style="font-weight:700;color:${g.color}">${g.label}</span>
+        <span style="font-weight:700">${g.horas.toFixed(1)} h · ${pctG}%</span>
+      </div>
+      ${filasTareas}
+    </div>`;
+  };
+
+  document.getElementById('modalOpTitulo').textContent = x.nombre;
+  document.getElementById('modalOpSub').textContent =
+    `${x.patente || ''} · ${x.total.toFixed(1)} h totales · FO ${fo}% · FU ${fu}%`;
+  document.getElementById('modalOpBody').innerHTML = `
+    <div class="det-grid">
+      <div class="det-chart"><canvas id="canvasDetalleFactor"></canvas></div>
+      <div class="det-grupos">
+        ${bloque(grupos.usado)}
+        ${bloque(grupos.operativo)}
+        ${bloque(grupos.noop)}
+      </div>
+    </div>`;
+  document.getElementById('modalOperacion').classList.add('open');
+
+  // Dona con las horas de cada tarea.
+  const orden = tareas.sort((a, b) => b[1] - a[1]);
+  if (chartDetalleFactor) chartDetalleFactor.destroy();
+  const cv = document.getElementById('canvasDetalleFactor');
+  if (cv) {
+    chartDetalleFactor = new Chart(cv.getContext('2d'), {
+      type: 'doughnut',
+      data: {
+        labels: orden.map(([id]) => etiquetaTarea(id)),
+        datasets: [{
+          data: orden.map(([, h]) => +h.toFixed(1)),
+          backgroundColor: orden.map(([id]) => colorTarea(id)),
+          borderWidth: 1, borderColor: '#fff',
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '55%',
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 }, padding: 6 } },
+          tooltip: { callbacks: { label: c => `${c.label}: ${c.parsed} h` } },
+        },
+      },
+    });
+  }
 }
 
 // ---- Inicializar ----
