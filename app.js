@@ -1458,24 +1458,39 @@ function _renderChartDesglose(filas) {
     order: 1, // las barras por debajo de la línea
   }));
 
-  // Línea NEGRA gruesa escalonada en el FO: de ahí hacia arriba el equipo NO
-  // estuvo operativo. Marca el corte por barra (techo de lo operativo).
-  const lineaCorte = {
-    type: 'line',
-    label: 'Corte operativo (FO)',
-    data: filas.map(x => +(x.f.fo * 100).toFixed(1)),
-    borderColor: '#111',
-    backgroundColor: '#111',
-    borderWidth: 3,
-    stepped: 'middle',
-    pointRadius: 0,
-    fill: false,
-    order: 0, // se dibuja sobre las barras
+  // FO por equipo (%), para dibujar el corte por barra.
+  const fos = filas.map(x => +(x.f.fo * 100).toFixed(1));
+
+  // Plugin: por cada barra, una "tapa" negra gruesa del ancho de la columna a
+  // la altura de su FO. De ahí hacia arriba el equipo NO estuvo operativo.
+  const corteOperativoPlugin = {
+    id: 'corteOperativo',
+    afterDatasetsDraw(chart) {
+      const { ctx, scales: { y } } = chart;
+      // Ancho de barra: lo tomamos del primer dataset de barras visible.
+      const meta = chart.getDatasetMeta(0);
+      ctx.save();
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      fos.forEach((fo, i) => {
+        const el = meta.data[i];
+        if (!el) return;
+        const w = (el.width || 18) * 0.95;
+        const cx = el.x;
+        const cy = y.getPixelForValue(fo);
+        ctx.beginPath();
+        ctx.moveTo(cx - w / 2, cy);
+        ctx.lineTo(cx + w / 2, cy);
+        ctx.stroke();
+      });
+      ctx.restore();
+    },
   };
 
   chartDesglose = new Chart(ctx.getContext('2d'), {
     type: 'bar',
-    data: { labels, datasets: [...datasetsTareas, lineaCorte] },
+    data: { labels, datasets: datasetsTareas },
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
@@ -1484,7 +1499,13 @@ function _renderChartDesglose(filas) {
         tooltip: {
           // Mostrar solo las series con valor > 0.
           filter: (item) => item.parsed.y > 0,
-          callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` },
+          callbacks: {
+            label: c => `${c.dataset.label}: ${c.parsed.y}%`,
+            afterBody: (items) => {
+              const i = items.length ? items[0].dataIndex : -1;
+              return i >= 0 ? `── Operativo (FO): ${fos[i]}%` : '';
+            },
+          },
         },
       },
       scales: {
@@ -1494,6 +1515,7 @@ function _renderChartDesglose(filas) {
              ticks: { font: { size: 10 }, maxRotation: 60, minRotation: 45 } },
       },
     },
+    plugins: [corteOperativoPlugin],
   });
 }
 
