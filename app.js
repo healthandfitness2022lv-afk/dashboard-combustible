@@ -1375,9 +1375,21 @@ function _renderChartFUFO(filas) {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
+      layout: { padding: { top: 20 } },
       plugins: {
         legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 } } },
         tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` } },
+        // % siempre visible encima de cada barra (sin hover).
+        datalabels: {
+          display: true,
+          anchor: 'end',
+          align: 'end',
+          rotation: -90,
+          offset: 2,
+          font: { size: 9, weight: 'bold' },
+          color: (c) => c.datasetIndex === 0 ? '#1B5E89' : '#A85613',
+          formatter: (v) => v > 0 ? v + '%' : '',
+        },
       },
       scales: {
         y: { beginAtZero: true, max: 100, grid: { color: '#F0F0F0' },
@@ -1385,6 +1397,7 @@ function _renderChartFUFO(filas) {
         x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 60, minRotation: 45 } },
       },
     },
+    plugins: [ChartDataLabels],
   });
 }
 
@@ -1410,29 +1423,35 @@ function _renderChartDesglose(filas) {
     backgroundColor: colorTarea(id),
     stack: 'tiempo',
     borderWidth: 0,
+    order: 1, // las barras por debajo de la línea
   }));
 
-  // Línea con el FU encima.
-  const lineaFU = {
+  // Línea con el FO encima de las barras (operatividad de cada equipo).
+  const lineaFO = {
     type: 'line',
-    label: 'FU (Utilización)',
-    data: filas.map(x => +(x.f.fu * 100).toFixed(1)),
+    label: 'FO (Operatividad)',
+    data: filas.map(x => +(x.f.fo * 100).toFixed(1)),
     borderColor: '#C0392B',
     backgroundColor: '#C0392B',
-    borderWidth: 2,
+    borderWidth: 2.5,
     pointRadius: 3,
     fill: false,
+    order: 0, // se dibuja sobre las barras
   };
 
   chartDesglose = new Chart(ctx.getContext('2d'), {
     type: 'bar',
-    data: { labels, datasets: [...datasetsTareas, lineaFU] },
+    data: { labels, datasets: [...datasetsTareas, lineaFO] },
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { position: 'bottom', labels: { boxWidth: 11, font: { size: 10 }, padding: 8 } },
-        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` } },
+        tooltip: {
+          // Mostrar solo las series con valor > 0.
+          filter: (item) => item.parsed.y > 0,
+          callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` },
+        },
       },
       scales: {
         y: { beginAtZero: true, max: 100, stacked: true, grid: { color: '#F0F0F0' },
@@ -1445,6 +1464,11 @@ function _renderChartDesglose(filas) {
 }
 
 // ---- Inicializar ----
+// El plugin datalabels solo debe verse en el gráfico FU/FO (gráfico 1). Si la
+// versión CDN se auto-registró global, lo apagamos por defecto para el resto.
+if (window.Chart && Chart.defaults.plugins && Chart.defaults.plugins.datalabels) {
+  Chart.defaults.plugins.datalabels.display = false;
+}
 updateTopbarDate();
 document.getElementById('loadingOverlay').classList.remove('hidden');
 window.addEventListener('load', () => { loadDashboard(); });

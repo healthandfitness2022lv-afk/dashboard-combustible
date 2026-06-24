@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <!-- Firebase compat (funciona desde file://, sin CORS) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -612,7 +613,6 @@
         <div class="chart-card chart-wide">
           <div class="chart-header">
             <h3>Desglose de tiempo por equipo</h3>
-            <span class="chart-badge">Tareas (% del total) · línea = FU</span>
           </div>
           <div class="chart-body" style="height:420px">
             <canvas id="chartDesglose"></canvas>
