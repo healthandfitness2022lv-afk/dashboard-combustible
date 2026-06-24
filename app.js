@@ -43,6 +43,8 @@ let chartUsoMant   = null;
 let chartArea      = null;
 let chartRefills   = null;
 let chartGrupos    = null;
+let chartFUFO      = null;
+let chartDesglose  = null;
 
 // ---- Navegación ----
 function navigate(section) {
@@ -62,6 +64,7 @@ function navigate(section) {
     externos:   ['Cuentas Externos',         'Deuda de combustible por empresa'],
     registros:  ['Registros de Distribución','Historial completo de despachos'],
     operacion:  ['Reportes Diarios',         'Horas trabajadas y factores por equipo'],
+    factores:   ['Factores FU / FO',         'Utilización y operatividad por equipo'],
   };
   const [h1, sub] = titles[section] || ['Dashboard', ''];
   document.getElementById('pageTitle').textContent    = h1;
@@ -318,6 +321,7 @@ function renderAll() {
   renderExternos();
   renderRegistrosSection();
   renderOperacion();
+  renderFactores();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -331,8 +335,11 @@ function alertasDocumentos(diasAviso = 14) {
   _equipos.forEach(e => {
     const docs = e.documentos || {};
     Object.entries(docs).forEach(([nombre, info]) => {
-      // info puede ser string (formato viejo) o {vence, fotoUrl}.
-      const venceStr = (info && typeof info === 'object') ? info.vence : info;
+      // info puede ser string (formato viejo) o {vence, fotoUrl, noVence}.
+      const esObj = info && typeof info === 'object';
+      // Documentos marcados como "no vence" (N/A) no generan alerta nunca.
+      if (esObj && info.noVence === true) return;
+      const venceStr = esObj ? info.vence : info;
       if (!venceStr) return;
       const vence = new Date(venceStr);
       const dias = Math.ceil((vence - ahora) / 86400000);
@@ -1018,16 +1025,29 @@ function renderDocumentos() {
   _equipos.forEach(e => {
     const docs = e.documentos || {};
     Object.entries(docs).forEach(([nombre, info]) => {
-      const venceStr = (info && typeof info === 'object') ? info.vence : info;
-      const fotoUrl = (info && typeof info === 'object') ? info.fotoUrl : null;
+      const esObj = info && typeof info === 'object';
+      const noVence = esObj && info.noVence === true;
+      const venceStr = esObj ? info.vence : info;
+      const fotoUrl = esObj ? info.fotoUrl : null;
+      // Documento marcado como "no vence" (N/A): siempre vigente, sin fecha.
+      if (noVence) {
+        filas.push({ equipo: e.nombre, patente: e.patente, nombre,
+                     vence: null, dias: null, estado: 'vigente', noVence: true, fotoUrl });
+        return;
+      }
       if (!venceStr) return;
       const vence = new Date(venceStr);
       const dias = Math.ceil((vence - ahora) / 86400000);
       const estado = dias < 0 ? 'vencido' : (dias <= 14 ? 'porVencer' : 'vigente');
-      filas.push({ equipo: e.nombre, patente: e.patente, nombre, vence, dias, estado, fotoUrl });
+      filas.push({ equipo: e.nombre, patente: e.patente, nombre, vence, dias, estado, noVence: false, fotoUrl });
     });
   });
-  filas.sort((a, b) => a.vence - b.vence);
+  // Ordena: los "no vence" al final; el resto por fecha de vencimiento.
+  filas.sort((a, b) => {
+    if (a.noVence !== b.noVence) return a.noVence ? 1 : -1;
+    if (a.noVence) return 0;
+    return a.vence - b.vence;
+  });
 
   // KPIs de la sección.
   const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
@@ -1040,9 +1060,10 @@ function renderDocumentos() {
     return;
   }
 
-  const badge = (estado) => {
-    if (estado === 'vencido') return '<span class="pct-badge pct-danger">VENCIDO</span>';
-    if (estado === 'porVencer') return '<span class="pct-badge pct-warn">POR VENCER</span>';
+  const badge = (f) => {
+    if (f.noVence) return '<span class="src-badge src-cist">NO VENCE</span>';
+    if (f.estado === 'vencido') return '<span class="pct-badge pct-danger">VENCIDO</span>';
+    if (f.estado === 'porVencer') return '<span class="pct-badge pct-warn">POR VENCER</span>';
     return '<span class="src-badge src-cist">VIGENTE</span>';
   };
 
@@ -1051,8 +1072,10 @@ function renderDocumentos() {
       <td><strong>${f.equipo}</strong></td>
       <td>${f.patente}</td>
       <td>${f.nombre}</td>
-      <td>${f.vence.toLocaleDateString('es-CL')}${f.estado !== 'vencido' ? ` <small style="color:#888">(${f.dias}d)</small>` : ''}</td>
-      <td>${badge(f.estado)}${f.fotoUrl ? ` <a href="${f.fotoUrl}" target="_blank" style="margin-left:6px">📎</a>` : ''}</td>
+      <td>${f.noVence
+            ? '<span style="color:#888">No vence (N/A)</span>'
+            : `${f.vence.toLocaleDateString('es-CL')}${f.estado !== 'vencido' ? ` <small style="color:#888">(${f.dias}d)</small>` : ''}`}</td>
+      <td>${badge(f)}${f.fotoUrl ? ` <a href="${f.fotoUrl}" target="_blank" style="margin-left:6px">📎</a>` : ''}</td>
     </tr>`).join('');
 }
 
@@ -1277,6 +1300,149 @@ function cerrarModalOperacion(e) {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') cerrarModalOperacion();
 });
+
+// ════════════════════════════════════════════════════════════════════════
+// SECCIÓN FACTORES (FU / FO)
+// ════════════════════════════════════════════════════════════════════════
+
+// Color por tarea para el desglose apilado (consistente con su clasificación).
+const COLOR_TAREA = {
+  operacion_horometro:    '#27AE60', // operación efectiva (verde)
+  disponible_con_postura: '#2E86C1',
+  disponible_sin_postura: '#5DADE2',
+  disponible_sin_operador:'#85C1E9',
+  condicion_climatica:    '#F4D03F',
+  detencion_op_mlp:       '#E67E22',
+  detencion_documental:   '#AF7AC5',
+  acreditacion:           '#95A5A6',
+  cambio_turno:           '#48C9B0',
+  panne:                  '#E74C3C', // no operativa
+  mantencion:             '#7F8C8D', // no operativa
+  desmovilizado:          '#34495E',
+};
+function colorTarea(id) { return COLOR_TAREA[id] || '#BDC3C7'; }
+
+// Reúne, por equipo (en el período actual de la app no aplica; usamos todos
+// los reportes), los factores y el desglose de horas por tarea.
+function _datosFactoresPorEquipo() {
+  const porEquipo = {};
+  _dailyReports.forEach(r => {
+    (porEquipo[r.equipoId] ??= []).push(r);
+  });
+  const filas = Object.entries(porEquipo).map(([equipoId, reportes]) => {
+    const eq = _equipos.find(e => e.id === equipoId);
+    const nombre = eq ? eq.nombre : (reportes[0].equipoNombre || equipoId);
+    const f = factoresDeReportes(reportes);
+    // Horas por tarea sumadas.
+    const horas = {};
+    reportes.forEach(rep => {
+      Object.entries(rep.desglose || {}).forEach(([id, h]) => {
+        horas[id] = (horas[id] || 0) + (Number(h) || 0);
+      });
+    });
+    return { nombre, f, horas, total: f.total };
+  }).filter(x => x.total > 0);
+  // Orden por nombre.
+  filas.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  return filas;
+}
+
+function renderFactores() {
+  const filas = _datosFactoresPorEquipo();
+  _renderChartFUFO(filas);
+  _renderChartDesglose(filas);
+}
+
+// ── Gráfico 1: FU vs FO por equipo (2 barras por equipo) ──
+function _renderChartFUFO(filas) {
+  const ctx = document.getElementById('chartFUFO');
+  if (!ctx) return;
+  const labels = filas.map(x => x.nombre);
+
+  if (chartFUFO) chartFUFO.destroy();
+  if (!filas.length) return;
+
+  chartFUFO = new Chart(ctx.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'FU (Utilización)', data: filas.map(x => +(x.f.fu * 100).toFixed(1)),
+          backgroundColor: '#2E86C1', borderRadius: 3 },
+        { label: 'FO (Operatividad)', data: filas.map(x => +(x.f.fo * 100).toFixed(1)),
+          backgroundColor: '#E67E22', borderRadius: 3 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 } } },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` } },
+      },
+      scales: {
+        y: { beginAtZero: true, max: 100, grid: { color: '#F0F0F0' },
+             ticks: { callback: v => v + '%' } },
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 60, minRotation: 45 } },
+      },
+    },
+  });
+}
+
+// ── Gráfico 2: desglose de tiempo por equipo (apilado % del total) + línea FU ──
+function _renderChartDesglose(filas) {
+  const ctx = document.getElementById('chartDesglose');
+  if (!ctx) return;
+  if (chartDesglose) chartDesglose.destroy();
+  if (!filas.length) return;
+
+  const labels = filas.map(x => x.nombre);
+
+  // Conjunto de tareas presentes en algún equipo (para crear un dataset c/u).
+  const tareasPresentes = [];
+  filas.forEach(x => Object.keys(x.horas).forEach(id => {
+    if (!tareasPresentes.includes(id)) tareasPresentes.push(id);
+  }));
+
+  // Un dataset apilado por tarea: valor = % del total del equipo.
+  const datasetsTareas = tareasPresentes.map(id => ({
+    label: etiquetaTarea(id),
+    data: filas.map(x => x.total > 0 ? +(((x.horas[id] || 0) / x.total) * 100).toFixed(1) : 0),
+    backgroundColor: colorTarea(id),
+    stack: 'tiempo',
+    borderWidth: 0,
+  }));
+
+  // Línea con el FU encima.
+  const lineaFU = {
+    type: 'line',
+    label: 'FU (Utilización)',
+    data: filas.map(x => +(x.f.fu * 100).toFixed(1)),
+    borderColor: '#C0392B',
+    backgroundColor: '#C0392B',
+    borderWidth: 2,
+    pointRadius: 3,
+    fill: false,
+  };
+
+  chartDesglose = new Chart(ctx.getContext('2d'), {
+    type: 'bar',
+    data: { labels, datasets: [...datasetsTareas, lineaFU] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'bottom', labels: { boxWidth: 11, font: { size: 10 }, padding: 8 } },
+        tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` } },
+      },
+      scales: {
+        y: { beginAtZero: true, max: 100, stacked: true, grid: { color: '#F0F0F0' },
+             ticks: { callback: v => v + '%' } },
+        x: { stacked: true, grid: { display: false },
+             ticks: { font: { size: 10 }, maxRotation: 60, minRotation: 45 } },
+      },
+    },
+  });
+}
 
 // ---- Inicializar ----
 updateTopbarDate();

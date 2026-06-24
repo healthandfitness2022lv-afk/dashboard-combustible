@@ -59,6 +59,10 @@
       <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm0 7V3.5L18.5 9H14zM7 13h2v5H7v-5zm4-3h2v8h-2v-8zm4 6h2v2h-2v-2z"/></svg>
       Reportes Diarios
     </a>
+    <a href="#factores" class="nav-item" data-section="factores">
+      <svg viewBox="0 0 24 24"><path d="M3 17h2v-7H3v7zm4 0h2V7H7v10zm4 0h2v-4h-2v4zm4 0h2V4h-2v13zm4 0h2v-9h-2v9z"/></svg>
+      Factores FU/FO
+    </a>
   </nav>
 
   <div class="sidebar-footer">
@@ -565,41 +569,6 @@
 
     <!-- ====== SECCIÓN REPORTES DIARIOS DE OPERACIÓN ====== -->
     <section id="section-operacion" class="section">
-      <div class="kpi-grid">
-        <div class="kpi-card kpi-blue">
-          <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg></div>
-          <div class="kpi-info">
-            <span class="kpi-label">Reportes</span>
-            <span class="kpi-value" id="kpiOpReportes">—</span>
-            <span class="kpi-unit">en el período</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-gold">
-          <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/></svg></div>
-          <div class="kpi-info">
-            <span class="kpi-label">Horas Trabajadas</span>
-            <span class="kpi-value" id="kpiOpHoras">—</span>
-            <span class="kpi-unit">horas</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-green">
-          <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg></div>
-          <div class="kpi-info">
-            <span class="kpi-label">Utilización (FU)</span>
-            <span class="kpi-value" id="kpiOpFU">—</span>
-            <span class="kpi-unit">usadas ÷ operativas</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-orange">
-          <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>
-          <div class="kpi-info">
-            <span class="kpi-label">Operabilidad (FO)</span>
-            <span class="kpi-value" id="kpiOpFO">—</span>
-            <span class="kpi-unit">operativas ÷ total</span>
-          </div>
-        </div>
-      </div>
-
       <div class="table-card">
         <div class="table-header">
           <h3>Operación por Equipo</h3>
@@ -621,6 +590,33 @@
               <tr><td colspan="6" class="td-loading">Cargando...</td></tr>
             </tbody>
           </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====== SECCIÓN FACTORES FU / FO ====== -->
+    <section id="section-factores" class="section">
+      <div class="charts-row">
+        <div class="chart-card chart-wide">
+          <div class="chart-header">
+            <h3>Factor de Utilización (FU) vs Operatividad (FO)</h3>
+            <span class="chart-badge">Por equipo</span>
+          </div>
+          <div class="chart-body" style="height:360px">
+            <canvas id="chartFUFO"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="charts-row">
+        <div class="chart-card chart-wide">
+          <div class="chart-header">
+            <h3>Desglose de tiempo por equipo</h3>
+            <span class="chart-badge">Tareas (% del total) · línea = FU</span>
+          </div>
+          <div class="chart-body" style="height:420px">
+            <canvas id="chartDesglose"></canvas>
+          </div>
         </div>
       </div>
     </section>
