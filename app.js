@@ -1332,6 +1332,7 @@ function _datosFactoresPorEquipo() {
   const filas = Object.entries(porEquipo).map(([equipoId, reportes]) => {
     const eq = _equipos.find(e => e.id === equipoId);
     const nombre = eq ? eq.nombre : (reportes[0].equipoNombre || equipoId);
+    const patente = eq ? eq.patente : (reportes[0].equipoPatente || '');
     const f = factoresDeReportes(reportes);
     // Horas por tarea sumadas.
     const horas = {};
@@ -1340,7 +1341,7 @@ function _datosFactoresPorEquipo() {
         horas[id] = (horas[id] || 0) + (Number(h) || 0);
       });
     });
-    return { nombre, f, horas, total: f.total };
+    return { nombre, patente, f, horas, total: f.total };
   }).filter(x => x.total > 0);
   // Orden por nombre.
   filas.sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
@@ -1357,7 +1358,8 @@ function renderFactores() {
 function _renderChartFUFO(filas) {
   const ctx = document.getElementById('chartFUFO');
   if (!ctx) return;
-  const labels = filas.map(x => x.nombre);
+  // Etiqueta en 2 líneas: nombre + patente (hay nombres repetidos).
+  const labels = filas.map(x => x.patente ? [x.nombre, x.patente] : x.nombre);
 
   if (chartFUFO) chartFUFO.destroy();
   if (!filas.length) return;
@@ -1375,30 +1377,51 @@ function _renderChartFUFO(filas) {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      layout: { padding: { top: 20 } },
       plugins: {
         legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 } } },
         tooltip: { callbacks: { label: c => `${c.dataset.label}: ${c.parsed.y}%` } },
-        // % siempre visible encima de cada barra (sin hover).
-        datalabels: {
-          display: true,
-          anchor: 'end',
-          align: 'end',
-          rotation: -90,
-          offset: 2,
-          font: { size: 9, weight: 'bold' },
-          color: (c) => c.datasetIndex === 0 ? '#1B5E89' : '#A85613',
-          formatter: (v) => v > 0 ? v + '%' : '',
-        },
       },
       scales: {
         y: { beginAtZero: true, max: 100, grid: { color: '#F0F0F0' },
              ticks: { callback: v => v + '%' } },
-        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 60, minRotation: 45 } },
+        x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 60, minRotation: 45 } },
       },
     },
-    plugins: [ChartDataLabels],
   });
+
+  // Tabla de datos debajo (estilo Excel): filas FU y FO con el % por equipo.
+  _renderTablaFUFO(filas);
+}
+
+// Tabla de valores alineada bajo el gráfico 1.
+function _renderTablaFUFO(filas) {
+  const cont = document.getElementById('tablaFUFO');
+  if (!cont) return;
+  if (!filas.length) { cont.innerHTML = ''; return; }
+
+  const celdas = (key, color) => filas.map(x =>
+    `<td style="text-align:center;color:${color};font-weight:600">${(x.f[key] * 100).toFixed(0)}%</td>`
+  ).join('');
+
+  cont.innerHTML = `
+    <table class="fufo-table">
+      <thead>
+        <tr>
+          <th></th>
+          ${filas.map(x => `<th><div class="fufo-eq">${x.nombre}</div>${x.patente ? `<div class="fufo-pat">${x.patente}</div>` : ''}</th>`).join('')}
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="fufo-row-label" style="color:#2E86C1">■ FU</td>
+          ${celdas('fu', '#1B5E89')}
+        </tr>
+        <tr>
+          <td class="fufo-row-label" style="color:#E67E22">■ FO</td>
+          ${celdas('fo', '#A85613')}
+        </tr>
+      </tbody>
+    </table>`;
 }
 
 // ── Gráfico 2: desglose de tiempo por equipo (apilado % del total) + línea FU ──
@@ -1408,13 +1431,22 @@ function _renderChartDesglose(filas) {
   if (chartDesglose) chartDesglose.destroy();
   if (!filas.length) return;
 
-  const labels = filas.map(x => x.nombre);
+  // Etiqueta en 2 líneas: nombre + patente (hay nombres repetidos).
+  const labels = filas.map(x => x.patente ? [x.nombre, x.patente] : x.nombre);
 
-  // Conjunto de tareas presentes en algún equipo (para crear un dataset c/u).
+  // Conjunto de tareas presentes en algún equipo.
   const tareasPresentes = [];
   filas.forEach(x => Object.keys(x.horas).forEach(id => {
     if (!tareasPresentes.includes(id)) tareasPresentes.push(id);
   }));
+  // Ordenar: tareas OPERATIVAS primero (van ABAJO en el apilado) y las NO
+  // operativas al final (arriba). Así el corte operativo/no-operativo de cada
+  // barra coincide con su FO.
+  tareasPresentes.sort((a, b) => {
+    const na = clasificacionDe(a).noOperativa ? 1 : 0;
+    const nb = clasificacionDe(b).noOperativa ? 1 : 0;
+    return na - nb;
+  });
 
   // Un dataset apilado por tarea: valor = % del total del equipo.
   const datasetsTareas = tareasPresentes.map(id => ({
@@ -1426,22 +1458,24 @@ function _renderChartDesglose(filas) {
     order: 1, // las barras por debajo de la línea
   }));
 
-  // Línea con el FO encima de las barras (operatividad de cada equipo).
-  const lineaFO = {
+  // Línea NEGRA gruesa escalonada en el FO: de ahí hacia arriba el equipo NO
+  // estuvo operativo. Marca el corte por barra (techo de lo operativo).
+  const lineaCorte = {
     type: 'line',
-    label: 'FO (Operatividad)',
+    label: 'Corte operativo (FO)',
     data: filas.map(x => +(x.f.fo * 100).toFixed(1)),
-    borderColor: '#C0392B',
-    backgroundColor: '#C0392B',
-    borderWidth: 2.5,
-    pointRadius: 3,
+    borderColor: '#111',
+    backgroundColor: '#111',
+    borderWidth: 3,
+    stepped: 'middle',
+    pointRadius: 0,
     fill: false,
     order: 0, // se dibuja sobre las barras
   };
 
   chartDesglose = new Chart(ctx.getContext('2d'), {
     type: 'bar',
-    data: { labels, datasets: [...datasetsTareas, lineaFO] },
+    data: { labels, datasets: [...datasetsTareas, lineaCorte] },
     options: {
       responsive: true, maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
@@ -1464,11 +1498,6 @@ function _renderChartDesglose(filas) {
 }
 
 // ---- Inicializar ----
-// El plugin datalabels solo debe verse en el gráfico FU/FO (gráfico 1). Si la
-// versión CDN se auto-registró global, lo apagamos por defecto para el resto.
-if (window.Chart && Chart.defaults.plugins && Chart.defaults.plugins.datalabels) {
-  Chart.defaults.plugins.datalabels.display = false;
-}
 updateTopbarDate();
 document.getElementById('loadingOverlay').classList.remove('hidden');
 window.addEventListener('load', () => { loadDashboard(); });
