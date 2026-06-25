@@ -86,6 +86,9 @@
       <span id="pageSubtitle">Vista global de operaciones</span>
     </div>
     <div class="topbar-actions">
+      <label class="theme-switch" title="Modo oscuro" onclick="toggleTheme()">
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </label>
       <button class="btn-refresh" onclick="loadDashboard()" title="Actualizar datos">
         <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
         Actualizar
@@ -248,14 +251,66 @@
           </div>
         </div>
 
-        <div class="fuel-chart-card">
+      </div>
+
+      <!-- Recargas + Nivel del tanque, lado a lado (2 columnas) -->
+      <div class="charts-row">
+        <div class="chart-card chart-wide">
+          <div class="chart-header">
+            <h3>Nivel del Tanque en el Tiempo</h3>
+            <span class="chart-badge">Últimos 30 días · recargas suben, entregas bajan</span>
+          </div>
+          <div class="chart-body" style="height:300px">
+            <canvas id="chartNivelTanque"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
           <div class="chart-header">
             <h3>Recargas al Tanque</h3>
             <span class="chart-badge">Entradas de combustible</span>
           </div>
-          <div class="chart-body">
+          <div class="chart-body" style="height:300px">
             <canvas id="chartRefills"></canvas>
           </div>
+        </div>
+      </div>
+
+      <!-- Reporte diario de combustible: resumen + detalle de un día -->
+      <div class="table-card">
+        <div class="table-header">
+          <h3>Reporte Diario de Combustible</h3>
+          <div class="date-nav">
+            <button class="date-arrow" onclick="cambiarDiaCombustible(-1)" title="Día anterior">‹</button>
+            <input type="date" class="date-input" id="fechaReporteComb" onchange="renderReporteCombustible()" />
+            <button class="date-arrow" onclick="cambiarDiaCombustible(1)" title="Día siguiente">›</button>
+          </div>
+        </div>
+
+        <!-- Mini-KPIs del día -->
+        <div class="day-kpis" id="dayKpisComb">
+          <div class="day-kpi"><span class="dk-val" id="dkTotalDia">—</span><span class="dk-lbl">Litros del día</span></div>
+          <div class="day-kpi"><span class="dk-val" id="dkCargasDia">—</span><span class="dk-lbl">Cargas</span></div>
+          <div class="day-kpi"><span class="dk-val" id="dkBesalcoDia">—</span><span class="dk-lbl">Besalco</span></div>
+          <div class="day-kpi"><span class="dk-val" id="dkExternosDia">—</span><span class="dk-lbl">Externos</span></div>
+          <div class="day-kpi"><span class="dk-val" id="dkRecargaDia">—</span><span class="dk-lbl">Recarga tanque</span></div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Hora</th>
+                <th>Equipo / Destino</th>
+                <th>Patente</th>
+                <th>Litros</th>
+                <th>Fuente</th>
+                <th>Operador</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyReporteComb">
+              <tr><td colspan="6" class="td-loading">Selecciona una fecha…</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -297,6 +352,12 @@
         <select class="table-search ml-auto" id="selectGrupo" style="display:none" onchange="filterEquiposGrupo(this)">
           <option value="todos">Todos los grupos</option>
         </select>
+        <select class="table-search" id="selectOrden" onchange="sortEquipos(this)">
+          <option value="uso_desc">Mayor % de uso</option>
+          <option value="uso_asc">Menor % de uso</option>
+          <option value="nombre">Nombre (A–Z)</option>
+          <option value="restante_asc">Menos restante</option>
+        </select>
         <input class="table-search" id="searchEquipos" placeholder="Buscar equipo…" oninput="filterEquiposText()" />
       </div>
 
@@ -321,25 +382,6 @@
 
     <!-- ====== SECCIÓN MANTENIMIENTO ====== -->
     <section id="section-mantencion" class="section">
-
-      <div class="kpi-grid">
-        <div class="kpi-card kpi-blue">
-          <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M22.7 19l-9.1-9.1c.9-2.3.4-5-1.5-6.9-2-2-5-2.4-7.4-1.3L9 6 6 9 1.6 4.7C.4 7.1.9 10.1 2.9 12.1c1.9 1.9 4.6 2.4 6.9 1.5l9.1 9.1c.4.4 1 .4 1.4 0l2.3-2.3c.5-.4.5-1.1.1-1.4z"/></svg></div>
-          <div class="kpi-info">
-            <span class="kpi-label">Intervenciones Registradas</span>
-            <span class="kpi-value" id="kpiMntTotal">—</span>
-            <span class="kpi-unit">mantenciones</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-gold">
-          <div class="kpi-icon"><svg viewBox="0 0 24 24"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg></div>
-          <div class="kpi-info">
-            <span class="kpi-label">Costo Total</span>
-            <span class="kpi-value" id="kpiMntCosto">—</span>
-            <span class="kpi-unit">CLP (histórico)</span>
-          </div>
-        </div>
-      </div>
 
       <div class="charts-row">
         <div class="chart-card">

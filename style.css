@@ -3,25 +3,27 @@
    ============================================ */
 
 :root {
-  --azul:     #003478;
-  --azul-lt:  #1F4E8F;
-  --azul-bg:  #E8EFF8;
-  --oro:      #D4AF37;
-  --oro-bg:   #FBF5DC;
-  --verde:    #27AE60;
-  --verde-bg: #E8F8EF;
-  --naranja:  #F39C12;
-  --narj-bg:  #FEF3DC;
-  --rojo:     #E74C3C;
-  --rojo-bg:  #FDECEA;
-  --gris:     #F5F5F5;
-  --gris-bd:  #E0E0E0;
-  --text:     #1A1A1A;
-  --text-sm:  #6B7280;
+  /* Acentos más saturados = mayor contraste sobre fondos claros */
+  --azul:     #0046A8;
+  --azul-lt:  #1F6FEB;
+  --azul-bg:  #DCE9FB;
+  --oro:      #C9962B;
+  --oro-bg:   #FAEFC8;
+  --verde:    #18A558;
+  --verde-bg: #DBF5E6;
+  --naranja:  #EA8A00;
+  --narj-bg:  #FCEBCF;
+  --rojo:     #DE3B2F;
+  --rojo-bg:  #FBE0DD;
+  /* Fondo general un poco más gris para que las tarjetas blancas resalten */
+  --gris:     #EDEFF3;
+  --gris-bd:  #D3D8E0;
+  --text:     #14181F;
+  --text-sm:  #5B6472;
   --white:    #ffffff;
   --sidebar-w: 240px;
   --radius:   12px;
-  --shadow:   0 2px 12px rgba(0,0,0,0.08);
+  --shadow:   0 2px 14px rgba(16,32,64,0.10);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -618,6 +620,110 @@ body {
 .pct-ok     { background: var(--verde-bg);  color: var(--verde); }
 .pct-warn   { background: var(--narj-bg);   color: var(--naranja); }
 .pct-danger { background: var(--rojo-bg);   color: var(--rojo); }
+
+/* ======= Chart pequeño (recargas al tanque) ======= */
+.chart-body-sm {
+  min-height: 0;
+  height: 180px;
+}
+
+/* ======= Reporte diario de combustible ======= */
+.date-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.date-input {
+  padding: 6px 10px;
+  border: 1px solid var(--gris-bd);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--white);
+  color: var(--text);
+}
+.date-arrow {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--gris-bd);
+  background: var(--white);
+  color: var(--azul);
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.date-arrow:hover { background: var(--azul-bg); }
+
+.day-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  padding: 16px;
+}
+.day-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 8px;
+  background: var(--gris);
+  border-radius: 10px;
+}
+.dk-val { font-size: 20px; font-weight: 800; color: var(--azul); }
+.dk-lbl { font-size: 11px; color: var(--text-sm); margin-top: 2px; text-align: center; }
+
+/* ======= Switch modo oscuro ======= */
+.theme-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.theme-switch .switch-track {
+  width: 42px;
+  height: 22px;
+  border-radius: 22px;
+  background: #cbd2dc;            /* gris visible sobre fondo claro */
+  border: 1px solid var(--gris-bd);
+  position: relative;
+  transition: background 0.2s;
+}
+.theme-switch .switch-thumb {
+  position: absolute;
+  top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--azul);        /* perilla azul Besalco, contrasta */
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  transition: transform 0.2s, background 0.2s;
+}
+[data-theme="dark"] .theme-switch .switch-track { background: var(--oro); border-color: var(--oro); }
+[data-theme="dark"] .theme-switch .switch-thumb { transform: translateX(20px); background: #fff; }
+
+/* ======= TEMA OSCURO ======= */
+[data-theme="dark"] {
+  /* Acentos brillantes para máximo contraste sobre superficies oscuras */
+  --azul:     #4D9BFF;
+  --azul-lt:  #6FB0FF;
+  --azul-bg:  #16294A;
+  --oro:      #F1C44A;
+  --oro-bg:   #33290F;
+  --verde:    #3FD884;
+  --verde-bg: #103324;
+  --naranja:  #FFA630;
+  --narj-bg:  #3A2A0E;
+  --rojo:     #FF6B5E;
+  --rojo-bg:  #3A1A18;
+  --gris:     #0E1219;
+  --gris-bd:  #2C3442;
+  --text:     #EEF1F6;
+  --text-sm:  #A7B0BE;
+  --white:    #1B212C;          /* superficie de tarjetas */
+  --shadow:   0 2px 14px rgba(0,0,0,0.5);
+}
+[data-theme="dark"] body { background: #070A0F; }
 
 /* ======= RESPONSIVE ======= */
 @media (max-width: 1024px) {

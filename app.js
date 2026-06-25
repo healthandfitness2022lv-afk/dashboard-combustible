@@ -17,6 +17,7 @@ let _factoresConfig = {}; // clasificación de tareas {tareaId: {noOperativa, us
 let _maintenance = [];    // historial de mantenciones (maintenance_records)
 let _equipoFilter = 'todos';
 let _grupoFilter = 'todos'; // filtro por grupo de equipos
+let _equipoSort = 'uso_desc'; // orden de la grilla de equipos
 
 // Catálogo de tareas: id -> etiqueta (debe coincidir con tareas_operacion.dart).
 const TAREAS_OPERACION = {
@@ -42,6 +43,7 @@ let chartMant      = null;
 let chartUsoMant   = null;
 let chartArea      = null;
 let chartRefills   = null;
+let chartNivelTanque = null;
 let chartGrupos    = null;
 let chartFUFO      = null;
 let chartDesglose  = null;
@@ -69,6 +71,14 @@ function navigate(section) {
   const [h1, sub] = titles[section] || ['Dashboard', ''];
   document.getElementById('pageTitle').textContent    = h1;
   document.getElementById('pageSubtitle').textContent = sub;
+
+  // Al entrar a Combustible, refresca el chart (Chart.js no mide bien cuando
+  // la sección estaba oculta) y el reporte del día.
+  if (section === 'combustible') {
+    if (typeof renderChartRefills === 'function') renderChartRefills();
+    if (typeof renderChartNivelTanque === 'function') renderChartNivelTanque();
+    if (typeof renderReporteCombustible === 'function') renderReporteCombustible();
+  }
 }
 
 document.querySelectorAll('.nav-item').forEach(el => {
@@ -313,7 +323,9 @@ function renderAll() {
   renderAlerts();
   renderTankSection();
   renderChartRefills();
+  renderChartNivelTanque();
   renderTableRefills();
+  initReporteCombustible();
   renderEquipos();
   renderChartGrupos();
   renderMantencionSection();
@@ -636,6 +648,103 @@ function renderChartRefills() {
   });
 }
 
+// ---- Chart: Nivel del tanque en el tiempo (paso a paso) ----
+// Reconstruye la curva del nivel del estanque. Como las entregas no guardan el
+// nivel resultante, partimos del nivel ACTUAL conocido (_tank.combustibleActual)
+// y caminamos hacia atrás aplicando cada evento en orden cronológico inverso:
+//   · recarga  → el nivel sube (antes = después − litros recargados)
+//   · entrega desde cisterna (fuente ≠ copec) → el nivel baja (antes = después + litros)
+//   · entrega COPEC → no toca el tanque (se ignora)
+// Así, si en un mismo día hubo recarga y entregas, se ven los escalones.
+function renderChartNivelTanque() {
+  const ctx = document.getElementById('chartNivelTanque');
+  if (!ctx) return;
+  if (chartNivelTanque) { chartNivelTanque.destroy(); chartNivelTanque = null; }
+
+  if (!_tank) {
+    return; // sin tanque configurado no hay nada que graficar
+  }
+
+  const desde = new Date();
+  desde.setDate(desde.getDate() - 30);
+
+  // Eventos que afectan el tanque: recargas (+) y entregas desde cisterna (−).
+  const eventos = [];
+  _refills.forEach(r => {
+    eventos.push({ t: new Date(r.fecha), delta: +(r.litros || 0), tipo: 'recarga' });
+  });
+  _records.forEach(r => {
+    if ((r.fuente || 'cisterna') === 'copec') return; // COPEC no sale del estanque
+    eventos.push({ t: new Date(r.fecha), delta: -(r.litriosIngresados || 0), tipo: 'entrega' });
+  });
+  eventos.sort((a, b) => a.t - b.t); // cronológico ascendente
+
+  // Reconstruir niveles hacia atrás desde el nivel actual.
+  // Recorremos del último al primero: nivelAntes = nivelDespues − delta.
+  const cap = _tank.capacidadMaxima || 0;
+  let nivelDespues = _tank.combustibleActual || 0;
+  const puntos = []; // {t, nivel}
+  for (let i = eventos.length - 1; i >= 0; i--) {
+    const ev = eventos[i];
+    // Punto "después" del evento i.
+    puntos.push({ t: ev.t, nivel: nivelDespues });
+    // Nivel antes del evento (= después de aplicar al revés su delta).
+    nivelDespues = nivelDespues - ev.delta;
+  }
+  puntos.reverse(); // ahora cronológico ascendente
+
+  // Filtra a últimos 30 días.
+  const visibles = puntos.filter(p => p.t >= desde);
+  if (visibles.length < 2) {
+    // Muy pocos datos en el rango: muestra al menos el nivel actual como línea plana.
+    return;
+  }
+
+  const labels = visibles.map(p =>
+    p.t.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit' }) + ' ' +
+    p.t.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' }));
+  const data = visibles.map(p => Math.max(0, Math.round(p.nivel)));
+
+  chartNivelTanque = new Chart(ctx.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Nivel del tanque',
+        data,
+        borderColor: '#1F6FEB',
+        backgroundColor: 'rgba(31,111,235,0.12)',
+        pointBackgroundColor: '#1F6FEB',
+        pointBorderColor: '#ffffff',
+        pointBorderWidth: 1.5,
+        fill: true,
+        stepped: false,
+        tension: 0.15,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+        borderWidth: 2.5,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${fmt(c.parsed.y)} Lt` } },
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          suggestedMax: cap || undefined,
+          grid: { color: '#F0F0F0' },
+          ticks: { callback: v => fmt(v) + ' Lt' },
+        },
+        x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } },
+      },
+    },
+  });
+}
+
 // ---- Tabla: Recargas del tanque ----
 function renderTableRefills() {
   const tbody = document.getElementById('tbodyRefills');
@@ -653,6 +762,127 @@ function renderTableRefills() {
     </tr>`).join('');
 }
 
+// ---- Reporte diario de combustible ----
+// Devuelve la fecha de un ISO como 'YYYY-MM-DD' (día local), para comparar.
+function diaLocal(isoStr) {
+  const d = new Date(isoStr);
+  const off = d.getTimezoneOffset() * 60000;
+  return new Date(d - off).toISOString().slice(0, 10);
+}
+
+// Inicializa el selector de fecha con el día de hoy (solo la primera vez) y
+// pinta el reporte.
+function initReporteCombustible() {
+  const input = document.getElementById('fechaReporteComb');
+  if (!input) return;
+  if (!input.value) {
+    input.value = new Date().toISOString().slice(0, 10);
+  }
+  renderReporteCombustible();
+}
+
+function cambiarDiaCombustible(delta) {
+  const input = document.getElementById('fechaReporteComb');
+  if (!input || !input.value) return;
+  const d = new Date(input.value + 'T12:00:00'); // mediodía evita saltos por TZ
+  d.setDate(d.getDate() + delta);
+  input.value = d.toISOString().slice(0, 10);
+  renderReporteCombustible();
+}
+
+function renderReporteCombustible() {
+  const input = document.getElementById('fechaReporteComb');
+  const tbody = document.getElementById('tbodyReporteComb');
+  if (!input || !tbody) return;
+  const dia = input.value;
+  if (!dia) return;
+
+  // Cargas de combustible de ese día.
+  const cargas = _records
+    .filter(r => diaLocal(r.fecha) === dia)
+    .sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+
+  // Recargas al tanque de ese día.
+  const recargas = _refills.filter(r => diaLocal(r.fecha) === dia);
+
+  // Mini-KPIs. Besalco = todo lo no externo; Externos = MLP u otras empresas.
+  const totalDia = cargas.reduce((s, r) => s + (r.litriosIngresados || 0), 0);
+  const besalco = cargas.filter(r => !r.esExterno)
+    .reduce((s, r) => s + (r.litriosIngresados || 0), 0);
+  const externos = cargas.filter(r => r.esExterno)
+    .reduce((s, r) => s + (r.litriosIngresados || 0), 0);
+  const recargaLt = recargas.reduce((s, r) => s + (r.litros || 0), 0);
+
+  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  setTxt('dkTotalDia', fmt(totalDia) + ' Lt');
+  setTxt('dkCargasDia', cargas.length);
+  setTxt('dkBesalcoDia', fmt(besalco) + ' Lt');
+  setTxt('dkExternosDia', fmt(externos) + ' Lt');
+  setTxt('dkRecargaDia', recargaLt > 0 ? '+' + fmt(recargaLt) + ' Lt' : '—');
+
+  // Tabla detalle.
+  if (!cargas.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="td-loading">Sin cargas registradas este día</td></tr>';
+    return;
+  }
+  const hora = (iso) => new Date(iso).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+  const destino = (r) => r.esExterno
+    ? `${r.empresaExterna || 'Externo'}${r.conductorExterno ? ' · ' + r.conductorExterno : ''}`
+    : (r.equipoNombre || equipoNombre(r.equipoId));
+  // Origen del consumo: externo (MLP, etc.) o Besalco (todo lo no-externo).
+  const fuenteBadge = (r) => r.esExterno
+    ? '<span class="pct-warn" style="padding:2px 8px;border-radius:6px;font-size:11px">Externos</span>'
+    : '<span class="pct-ok" style="padding:2px 8px;border-radius:6px;font-size:11px">Besalco</span>';
+
+  tbody.innerHTML = cargas.map(r => `
+    <tr>
+      <td>${hora(r.fecha)}</td>
+      <td>${destino(r)}</td>
+      <td>${r.equipoPatente || '—'}</td>
+      <td><strong>${fmt(r.litriosIngresados, 0)} Lt</strong></td>
+      <td>${fuenteBadge(r)}</td>
+      <td>${r.operador || '—'}</td>
+    </tr>`).join('');
+}
+
+// ---- Modo oscuro ----
+// Ajusta los colores por defecto de Chart.js según el tema, para que ejes,
+// grillas y leyendas se vean en ambos modos (los datasets ya traen su color).
+function aplicarTemaCharts() {
+  if (typeof Chart === 'undefined') return;
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+  Chart.defaults.color = dark ? '#A7B0BE' : '#5B6472';
+  Chart.defaults.borderColor = dark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+}
+
+// Redibuja todos los charts (para que tomen los nuevos colores de tema).
+function redibujarCharts() {
+  aplicarTemaCharts();
+  if (!_equipos.length && !_records.length) return; // aún sin datos
+  renderAll();
+}
+
+function toggleTheme() {
+  const root = document.documentElement;
+  const dark = root.getAttribute('data-theme') === 'dark';
+  if (dark) {
+    root.removeAttribute('data-theme');
+    localStorage.setItem('dashTheme', 'light');
+  } else {
+    root.setAttribute('data-theme', 'dark');
+    localStorage.setItem('dashTheme', 'dark');
+  }
+  redibujarCharts();
+}
+
+// Aplica el tema guardado al cargar la página.
+(function aplicarTemaGuardado() {
+  if (localStorage.getItem('dashTheme') === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+  aplicarTemaCharts();
+})();
+
 // ---- Equipos section ----
 function filterEquipos(btn) {
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
@@ -662,6 +892,45 @@ function filterEquipos(btn) {
 }
 
 function filterEquiposText() { renderEquipos(); }
+
+function sortEquipos(sel) {
+  _equipoSort = sel.value;
+  renderEquipos();
+}
+
+// Ordena la lista de equipos según el criterio elegido. Los equipos sin % de
+// uso (sin medidor configurado) se mandan al final en los órdenes por uso.
+function ordenarEquipos(lista) {
+  const arr = [...lista];
+  const pct = (e) => { const p = getPct(e); return p == null ? -1 : p; };
+  const restante = (e) => {
+    const m = getMedidorCritico(e);
+    return (m && m.restante != null) ? m.restante : Infinity;
+  };
+  switch (_equipoSort) {
+    case 'uso_asc':
+      // Menor % primero, pero los "sin dato" (−1) al final.
+      arr.sort((a, b) => {
+        const pa = pct(a), pb = pct(b);
+        if (pa < 0 && pb < 0) return 0;
+        if (pa < 0) return 1;
+        if (pb < 0) return -1;
+        return pa - pb;
+      });
+      break;
+    case 'nombre':
+      arr.sort((a, b) => (a.nombre || '').toLowerCase().localeCompare((b.nombre || '').toLowerCase()));
+      break;
+    case 'restante_asc':
+      arr.sort((a, b) => restante(a) - restante(b));
+      break;
+    case 'uso_desc':
+    default:
+      arr.sort((a, b) => pct(b) - pct(a)); // mayor % primero
+      break;
+  }
+  return arr;
+}
 
 // Nombres de grupos existentes (equipos con grupo asignado), ordenados.
 function gruposEquipos() {
@@ -709,6 +978,8 @@ function renderEquipos() {
     grid.innerHTML = '<p class="loading-text">No hay equipos con ese filtro.</p>';
     return;
   }
+
+  lista = ordenarEquipos(lista);
 
   grid.innerHTML = lista.map(e => {
     const estadoCls = e.estado === 'mantencion' ? 'badge-mant' :
@@ -827,12 +1098,6 @@ function renderMantencionSection() {
 
 // Historial real de mantenciones realizadas (maintenance_records).
 function renderHistorialMantencion() {
-  const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-  const total = _maintenance.length;
-  const costoTotal = _maintenance.reduce((s, m) => s + (m.costo || 0), 0);
-  setTxt('kpiMntTotal', total);
-  setTxt('kpiMntCosto', costoTotal > 0 ? '$' + fmt(costoTotal) : '$0');
-
   const tbody = document.getElementById('tbodyHistMant');
   if (!tbody) return;
   if (!_maintenance.length) {
