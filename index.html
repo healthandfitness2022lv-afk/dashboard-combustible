@@ -8,6 +8,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Exportación: Excel (SheetJS) y PDF (jsPDF + autotable) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
   <!-- Firebase compat (funciona desde file://, sin CORS) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
@@ -127,7 +131,7 @@
             <svg viewBox="0 0 24 24"><path d="M19.77 7.23l.01-.01-3.72-3.72L15 4.56l2.11 2.11c-.94.36-1.61 1.26-1.61 2.33 0 1.38 1.12 2.5 2.5 2.5.36 0 .69-.08 1-.21v7.21c0 .55-.45 1-1 1s-1-.45-1-1V14c0-1.1-.9-2-2-2h-1V5c0-1.1-.9-2-2-2H6c-1.1 0-2 .9-2 2v16h10v-7.5h1.5v5c0 1.38 1.12 2.5 2.5 2.5s2.5-1.12 2.5-2.5V9c0-.69-.28-1.32-.73-1.77zM8 18v-4.5H6L10 6v5h2l-4 7z"/></svg>
           </div>
           <div class="kpi-info">
-            <span class="kpi-label">Total Entregado (histórico)</span>
+            <span class="kpi-label">Míter</span>
             <span class="kpi-value" id="kpiTotalLitros">—</span>
             <span class="kpi-unit">Litros</span>
           </div>
@@ -281,7 +285,7 @@
           <h3>Reporte Diario de Combustible</h3>
           <div class="date-nav">
             <button class="date-arrow" onclick="cambiarDiaCombustible(-1)" title="Día anterior">‹</button>
-            <input type="date" class="date-input" id="fechaReporteComb" onchange="renderReporteCombustible()" />
+            <input type="date" class="date-input" id="fechaReporteComb" onchange="renderReporteCombustible()" onclick="abrirCalendario(this)" onkeydown="return false" />
             <button class="date-arrow" onclick="cambiarDiaCombustible(1)" title="Día siguiente">›</button>
           </div>
         </div>
@@ -345,10 +349,10 @@
     <section id="section-equipos" class="section">
 
       <div class="filter-bar">
-        <button class="filter-btn active" data-filter="todos" onclick="filterEquipos(this)">Todos</button>
-        <button class="filter-btn" data-filter="activo" onclick="filterEquipos(this)">Activos</button>
+        <button class="filter-btn active" data-filter="activo" onclick="filterEquipos(this)">Activos</button>
         <button class="filter-btn" data-filter="mantencion" onclick="filterEquipos(this)">En Mantención</button>
         <button class="filter-btn" data-filter="fuera_servicio" onclick="filterEquipos(this)">Fuera de Servicio</button>
+        <button class="filter-btn" data-filter="baja" onclick="filterEquipos(this)">Dados de Baja</button>
         <select class="table-search ml-auto" id="selectGrupo" style="display:none" onchange="filterEquiposGrupo(this)">
           <option value="todos">Todos los grupos</option>
         </select>
@@ -361,15 +365,39 @@
         <input class="table-search" id="searchEquipos" placeholder="Buscar equipo…" oninput="filterEquiposText()" />
       </div>
 
+      <!-- Exportar uso de equipos en un período -->
+      <div class="export-bar">
+        <span class="export-lbl">Reporte de uso:</span>
+        <label>Desde <input type="date" class="date-input" id="expDesde" onclick="abrirCalendario(this)" onkeydown="return false" /></label>
+        <label>Hasta <input type="date" class="date-input" id="expHasta" onclick="abrirCalendario(this)" onkeydown="return false" /></label>
+        <button class="btn-export btn-export-xls" onclick="exportarUsoEquipos('excel')">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm-2 15h-2v-2H8v-2h2v-2h2v2h2v2h-2v2zm1-9V3.5L18.5 9H13z"/></svg>
+          Excel
+        </button>
+        <button class="btn-export btn-export-pdf" onclick="exportarUsoEquipos('pdf')">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+          PDF
+        </button>
+      </div>
+
       <!-- Combustible por grupo / flota (solo si hay grupos) -->
       <div class="charts-row" id="rowGrupos" style="display:none">
-        <div class="chart-card chart-wide">
+        <div class="chart-card">
           <div class="chart-header">
             <h3>Combustible por Grupo / Flota</h3>
-            <span class="chart-badge">Suma por grupo</span>
+            <span class="chart-badge">Suma total por grupo</span>
           </div>
           <div class="chart-body">
             <canvas id="chartGrupos"></canvas>
+          </div>
+        </div>
+        <div class="chart-card chart-wide">
+          <div class="chart-header">
+            <h3>Equipos del Grupo <span id="grupoSelNombre" style="color:var(--azul)"></span></h3>
+            <span class="chart-badge" id="grupoSelHint">Pincha un grupo para ver sus equipos</span>
+          </div>
+          <div class="chart-body">
+            <canvas id="chartSubgrupo"></canvas>
           </div>
         </div>
       </div>
@@ -670,6 +698,22 @@
 
   </div><!-- /content -->
 </main>
+
+<!-- MODAL: detalle completo de un equipo -->
+<div class="modal-overlay" id="modalEquipo" onclick="cerrarModalEquipo(event)">
+  <div class="modal-box modal-box-lg" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div>
+        <h3 id="modalEqTitulo">Detalle del equipo</h3>
+        <span id="modalEqSub" class="modal-sub">—</span>
+      </div>
+      <button class="modal-close" onclick="cerrarModalEquipo()" aria-label="Cerrar">
+        <svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="modalEqBody"></div>
+  </div>
+</div>
 
 <!-- MODAL: detalle de reportes diarios por equipo -->
 <div class="modal-overlay" id="modalOperacion" onclick="cerrarModalOperacion(event)">

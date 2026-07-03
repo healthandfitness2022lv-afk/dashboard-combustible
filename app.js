@@ -4,6 +4,11 @@
    Modelo de mantención: actual + próximo + frecuencia (km / horómetro / pluma).
    ============================================ */
 
+// Entregado histórico previo a la app (al 20-jun-2026). El "Míter" parte de
+// aquí y suma los movimientos registrados. Debe coincidir con el mismo valor
+// en la app Flutter (AppProvider.acumuladoInicialEntregado).
+const ACUM_INICIAL_ENTREGADO = 409867;
+
 // ---- Estado global ----
 let _equipos   = [];
 let _records   = [];
@@ -15,7 +20,7 @@ let _empresasIncluidas = []; // empresas externas incluidas en el proyecto (no s
 let _dailyReports = [];   // reportes diarios de operación (daily_reports)
 let _factoresConfig = {}; // clasificación de tareas {tareaId: {noOperativa, usoEfectivo}}
 let _maintenance = [];    // historial de mantenciones (maintenance_records)
-let _equipoFilter = 'todos';
+let _equipoFilter = 'activo';
 let _grupoFilter = 'todos'; // filtro por grupo de equipos
 let _equipoSort = 'uso_desc'; // orden de la grilla de equipos
 
@@ -45,6 +50,8 @@ let chartArea      = null;
 let chartRefills   = null;
 let chartNivelTanque = null;
 let chartGrupos    = null;
+let chartSubgrupo  = null;
+let _grupoSeleccionadoSub = null; // grupo cuyo desglose de equipos se muestra
 let chartFUFO      = null;
 let chartDesglose  = null;
 
@@ -180,6 +187,12 @@ function getPct(e) {
   const pcts = medidoresDe(e).map(m => m.pct).filter(p => p != null);
   if (!pcts.length) return null;
   return Math.max(...pcts);
+}
+
+// % de uso para ALERTAS de mantención: los equipos dados de baja no alertan.
+function getPctAlerta(e) {
+  if (e.estado === 'baja') return null;
+  return getPct(e);
 }
 
 // Restante del medidor más crítico (el que está más cerca/pasado del límite).
@@ -400,13 +413,15 @@ function renderKPIs() {
   setTxt('kpiTanquePct', _tank ? pctTanque.toFixed(0) + '%' : '—');
   setTxt('kpiTanqueLt', _tank ? `${fmt(_tank.combustibleActual)} / ${fmt(_tank.capacidadMaxima)} Lt` : 'Sin tanque');
 
-  // 2. Total entregado histórico.
-  const totalEntregado = _tank?.totalDistribuido
-    ?? _records.reduce((s, r) => s + (r.litriosIngresados || 0), 0);
-  setTxt('kpiTotalLitros', fmt(totalEntregado));
+  // 2. Míter: valor inicial histórico + movimientos registrados no-COPEC.
+  // Bruto (no descuenta devueltos). Mismo cálculo que la app del operador.
+  const miter = ACUM_INICIAL_ENTREGADO + _records
+    .filter(r => (r.fuente || 'cisterna') !== 'copec')
+    .reduce((s, r) => s + (r.litriosIngresados || 0), 0);
+  setTxt('kpiTotalLitros', fmt(miter));
 
-  // 3. Equipos en alerta de mantención (≥80%).
-  const enAlerta = _equipos.filter(e => { const p = getPct(e); return p != null && p >= 80; }).length;
+  // 3. Equipos en alerta de mantención (≥80%). Excluye dados de baja.
+  const enAlerta = _equipos.filter(e => { const p = getPctAlerta(e); return p != null && p >= 80; }).length;
   setTxt('kpiEquiposMantencion', enAlerta);
 
   // 4. Documentos vencidos / por vencer (≤14 días).
@@ -474,6 +489,7 @@ function renderChartFlota() {
   const activos = _equipos.filter(e => e.estado === 'activo').length;
   const mant    = _equipos.filter(e => e.estado === 'mantencion').length;
   const fuera   = _equipos.filter(e => e.estado === 'fuera_servicio').length;
+  const baja    = _equipos.filter(e => e.estado === 'baja').length;
   const total   = _equipos.length;
 
   document.getElementById('dcTotal').textContent = total;
@@ -483,9 +499,9 @@ function renderChartFlota() {
   chartFlota = new Chart(ctx, {
     type: 'doughnut',
     data: {
-      labels: ['Activos', 'En Mantención', 'Fuera de Servicio'],
-      datasets: [{ data: [activos, mant, fuera],
-        backgroundColor: ['#27AE60', '#F39C12', '#E74C3C'], borderWidth: 0, hoverOffset: 6 }],
+      labels: ['Activos', 'En Mantención', 'Fuera de Servicio', 'Dados de Baja'],
+      datasets: [{ data: [activos, mant, fuera, baja],
+        backgroundColor: ['#27AE60', '#F39C12', '#E74C3C', '#7F8C8D'], borderWidth: 0, hoverOffset: 6 }],
     },
     options: {
       responsive: true, maintainAspectRatio: false, cutout: '68%',
@@ -526,8 +542,8 @@ function renderChartArea() {
 
 // ---- Alertas (mantención + tanque + documentos) ----
 function renderAlerts() {
-  const urgentes = _equipos.filter(e => { const p = getPct(e); return p != null && p >= 100; });
-  const proximos = _equipos.filter(e => { const p = getPct(e); return p != null && p >= 80 && p < 100; });
+  const urgentes = _equipos.filter(e => { const p = getPctAlerta(e); return p != null && p >= 100; });
+  const proximos = _equipos.filter(e => { const p = getPctAlerta(e); return p != null && p >= 80 && p < 100; });
   const tankLow  = _tank && (_tank.combustibleActual / _tank.capacidadMaxima) * 100 < 20;
   const docs     = alertasDocumentos();
 
@@ -958,11 +974,10 @@ function filterEquiposGrupo(sel) {
   renderEquipos();
 }
 
-function renderEquipos() {
-  poblarSelectGrupos();
+// Equipos según los filtros activos en pantalla (estado, grupo, búsqueda).
+// Reutilizado por la grilla y por la exportación del reporte de uso.
+function equiposFiltrados() {
   const q = (document.getElementById('searchEquipos')?.value || '').toLowerCase();
-  const grid = document.getElementById('equiposGrid');
-
   let lista = [..._equipos];
   if (_equipoFilter !== 'todos') lista = lista.filter(e => e.estado === _equipoFilter);
   if (_grupoFilter !== 'todos') lista = lista.filter(e => (e.grupo || '').trim() === _grupoFilter);
@@ -973,6 +988,195 @@ function renderEquipos() {
       (e.codigo  || '').toLowerCase().includes(q)
     );
   }
+  return lista;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// EXPORTAR REPORTE DE USO DE EQUIPOS (Excel / PDF)
+// Para cada equipo filtrado y un período [desde, hasta]: horómetro/km inicial
+// y final (con sus fechas reales), avance, combustible del período y la
+// relación km|h por litro.
+// ════════════════════════════════════════════════════════════════════════
+
+// Calcula la fila de uso de un equipo en el período dado.
+function _filaUsoEquipo(e, desde, hasta) {
+  const unidad = (e.unidadMantencion === 'horas' || (e.horasActual != null && e.kmActual == null)) ? 'h' : 'km';
+
+  // Cargas del equipo dentro del rango, con lectura de medidor, cronológico.
+  const cargas = _records
+    .filter(r => r.equipoId === e.id && !r.esExterno)
+    .filter(r => { const t = new Date(r.fecha); return t >= desde && t <= hasta; })
+    .sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+
+  const conLectura = cargas.filter(r => r.kmOHoras != null);
+  const combustible = cargas.reduce((s, r) => s + (r.litriosIngresados || 0), 0);
+
+  let iniVal = null, iniFecha = null, finVal = null, finFecha = null;
+  if (conLectura.length) {
+    iniVal = conLectura[0].kmOHoras;         iniFecha = new Date(conLectura[0].fecha);
+    finVal = conLectura[conLectura.length - 1].kmOHoras; finFecha = new Date(conLectura[conLectura.length - 1].fecha);
+  }
+  const avance = (iniVal != null && finVal != null) ? Math.max(0, finVal - iniVal) : null;
+
+  // Estimación a los bordes del rango, extrapolando por la tasa de avance.
+  let iniEst = null, finEst = null;
+  if (iniVal != null && finVal != null && iniFecha && finFecha && finFecha > iniFecha && avance > 0) {
+    const dias = (finFecha - iniFecha) / 86400000;
+    const tasa = avance / dias; // unidad por día
+    iniEst = iniVal - tasa * ((iniFecha - desde) / 86400000);
+    finEst = finVal + tasa * ((hasta - finFecha) / 86400000);
+  }
+
+  // Relación medidor/litro (cuánto avanzó por cada litro consumido).
+  const relacion = (avance != null && combustible > 0) ? (avance / combustible) : null;
+
+  return { e, unidad, cargas: cargas.length, combustible, iniVal, iniFecha, finVal, finFecha, avance, iniEst, finEst, relacion };
+}
+
+function _fmtFecha(d) {
+  return d ? d.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+}
+
+function exportarUsoEquipos(formato) {
+  const dDesde = document.getElementById('expDesde').value;
+  const dHasta = document.getElementById('expHasta').value;
+  if (!dDesde || !dHasta) {
+    alert('Selecciona el rango de fechas (Desde y Hasta) para el reporte.');
+    return;
+  }
+  const desde = new Date(dDesde + 'T00:00:00');
+  const hasta = new Date(dHasta + 'T23:59:59');
+  if (hasta < desde) { alert('La fecha "Hasta" debe ser posterior a "Desde".'); return; }
+
+  const equipos = ordenarEquipos(equiposFiltrados());
+  if (!equipos.length) { alert('No hay equipos en el filtro actual.'); return; }
+
+  const filas = equipos.map(e => _filaUsoEquipo(e, desde, hasta));
+  const periodo = `${_fmtFecha(desde)} a ${_fmtFecha(hasta)}`;
+
+  if (formato === 'excel') _exportarExcel(filas, periodo);
+  else _exportarPDF(filas, periodo);
+}
+
+// Valor con su unidad real pegada, ej: "5.000 km" / "1.240 h".
+function _conUnidad(val, unidad) {
+  return val != null ? `${Math.round(val)} ${unidad}` : '—';
+}
+
+function _exportarExcel(filas, periodo) {
+  if (typeof XLSX === 'undefined') { alert('No se pudo cargar la librería de Excel.'); return; }
+  const wb = XLSX.utils.book_new();
+
+  // ── Hoja 1: USO REAL (con unidades reales por equipo) ──
+  const cab = [
+    'Equipo', 'Patente', 'Grupo',
+    'Medidor inicial', 'Fecha inicial', 'Medidor final', 'Fecha final',
+    'Avance', 'Combustible (Lt)', 'Nº cargas', 'Rendimiento (avance/Lt)'
+  ];
+  const datos = filas.map(f => [
+    f.e.nombre, f.e.patente, (f.e.grupo || '').trim() || '—',
+    _conUnidad(f.iniVal, f.unidad), _fmtFecha(f.iniFecha),
+    _conUnidad(f.finVal, f.unidad), _fmtFecha(f.finFecha),
+    _conUnidad(f.avance, f.unidad),
+    Math.round(f.combustible), f.cargas,
+    f.relacion != null ? `${f.relacion.toFixed(2)} ${f.unidad}/Lt` : '—'
+  ]);
+  const ws1 = XLSX.utils.aoa_to_sheet([
+    ['Reporte de uso de equipos — DATOS REALES'], ['Período: ' + periodo], [], cab, ...datos
+  ]);
+  ws1['!cols'] = cab.map(() => ({ wch: 16 }));
+  XLSX.utils.book_append_sheet(wb, ws1, 'Uso real');
+
+  // ── Hoja 2: ESTIMADO A LOS BORDES DEL PERÍODO ──
+  const cabEst = [
+    'Equipo', 'Patente', 'Estimado inicio período', 'Estimado fin período', 'Avance estimado'
+  ];
+  const datosEst = filas.map(f => {
+    const avEst = (f.iniEst != null && f.finEst != null) ? f.finEst - f.iniEst : null;
+    return [
+      f.e.nombre, f.e.patente,
+      _conUnidad(f.iniEst, f.unidad), _conUnidad(f.finEst, f.unidad), _conUnidad(avEst, f.unidad)
+    ];
+  });
+  const ws2 = XLSX.utils.aoa_to_sheet([
+    ['Reporte de uso de equipos — ESTIMADO (extrapolado a los bordes del período)'],
+    ['Período: ' + periodo], ['Nota: valores estimados según la tasa de avance, no medidos.'], [],
+    cabEst, ...datosEst
+  ]);
+  ws2['!cols'] = cabEst.map(() => ({ wch: 20 }));
+  XLSX.utils.book_append_sheet(wb, ws2, 'Estimado');
+
+  XLSX.writeFile(wb, `uso_equipos_${_slugFecha()}.xlsx`);
+}
+
+function _exportarPDF(filas, periodo) {
+  if (!window.jspdf || !window.jspdf.jsPDF) { alert('No se pudo cargar la librería de PDF.'); return; }
+  const doc = new window.jspdf.jsPDF({ orientation: 'landscape' });
+  doc.setFontSize(14);
+  doc.text('Reporte de uso de equipos', 14, 15);
+  doc.setFontSize(10);
+  doc.text('Período: ' + periodo, 14, 22);
+
+  // ── Tabla 1: datos reales (unidad pegada a cada valor) ──
+  const head = [[
+    'Equipo', 'Patente', 'Medidor ini', 'Fecha ini', 'Medidor fin', 'Fecha fin',
+    'Avance', 'Comb. (Lt)', 'Cargas', 'Rendimiento'
+  ]];
+  const body = filas.map(f => [
+    f.e.nombre, f.e.patente,
+    _conUnidad(f.iniVal, f.unidad), _fmtFecha(f.iniFecha),
+    _conUnidad(f.finVal, f.unidad), _fmtFecha(f.finFecha),
+    _conUnidad(f.avance, f.unidad),
+    fmt(Math.round(f.combustible)), f.cargas,
+    f.relacion != null ? `${f.relacion.toFixed(2)} ${f.unidad}/Lt` : '—'
+  ]);
+  doc.autoTable({
+    head, body, startY: 27, styles: { fontSize: 7, cellPadding: 1.5 },
+    headStyles: { fillColor: [0, 70, 168] },
+    alternateRowStyles: { fillColor: [240, 244, 250] },
+  });
+
+  // ── Tabla 2: estimado a los bordes del período (en página aparte) ──
+  doc.addPage();
+  doc.setFontSize(13);
+  doc.text('Estimado a los bordes del período', 14, 15);
+  doc.setFontSize(9);
+  doc.text('Valores extrapolados por la tasa de avance (no medidos). Período: ' + periodo, 14, 21);
+
+  const headEst = [['Equipo', 'Patente', 'Estimado inicio', 'Estimado fin', 'Avance estimado']];
+  const bodyEst = filas.map(f => {
+    const avEst = (f.iniEst != null && f.finEst != null) ? f.finEst - f.iniEst : null;
+    return [
+      f.e.nombre, f.e.patente,
+      _conUnidad(f.iniEst, f.unidad), _conUnidad(f.finEst, f.unidad), _conUnidad(avEst, f.unidad)
+    ];
+  });
+  doc.autoTable({
+    head: headEst, body: bodyEst, startY: 26, styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [150, 120, 40] },
+    alternateRowStyles: { fillColor: [248, 244, 235] },
+  });
+
+  doc.save(`uso_equipos_${_slugFecha()}.pdf`);
+}
+
+function _slugFecha() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// Abre directamente el calendario nativo al tocar un input de fecha (sin que
+// se pueda escribir). showPicker() está soportado en navegadores modernos.
+function abrirCalendario(input) {
+  if (input && typeof input.showPicker === 'function') {
+    try { input.showPicker(); } catch (_) { /* algunos navegadores lo bloquean si no es gesto directo */ }
+  }
+}
+
+function renderEquipos() {
+  poblarSelectGrupos();
+  const grid = document.getElementById('equiposGrid');
+
+  let lista = equiposFiltrados();
 
   if (!lista.length) {
     grid.innerHTML = '<p class="loading-text">No hay equipos con ese filtro.</p>';
@@ -983,11 +1187,14 @@ function renderEquipos() {
 
   grid.innerHTML = lista.map(e => {
     const estadoCls = e.estado === 'mantencion' ? 'badge-mant' :
-                      e.estado === 'fuera_servicio' ? 'badge-fuera' : 'badge-activo';
+                      e.estado === 'fuera_servicio' ? 'badge-fuera' :
+                      e.estado === 'baja' ? 'badge-baja' : 'badge-activo';
     const estadoText = e.estado === 'mantencion' ? 'En Mantención' :
-                       e.estado === 'fuera_servicio' ? 'Fuera de Servicio' : 'Activo';
+                       e.estado === 'fuera_servicio' ? 'Fuera de Servicio' :
+                       e.estado === 'baja' ? 'Dado de Baja' : 'Activo';
     const cardCls = e.estado === 'mantencion' ? 'mantencion' :
-                    e.estado === 'fuera_servicio' ? 'fuera_servicio' : '';
+                    e.estado === 'fuera_servicio' ? 'fuera_servicio' :
+                    e.estado === 'baja' ? 'baja' : '';
 
     // Un bloque de progreso por cada medidor del equipo (km, horómetro, pluma).
     const medidores = medidoresDe(e);
@@ -1015,7 +1222,7 @@ function renderEquipos() {
     }).join('');
 
     return `
-      <div class="equipo-card ${cardCls}">
+      <div class="equipo-card ${cardCls} equipo-clickable" onclick="abrirModalEquipo('${encodeURIComponent(e.id)}')" title="Ver detalle del equipo">
         <div class="equipo-header">
           <div>
             <div class="equipo-nombre">${e.nombre}</div>
@@ -1029,6 +1236,7 @@ function renderEquipos() {
           ${(e.marca || e.modelo) ? `<span>Marca/Modelo: ${e.marca || ''} ${e.modelo || ''}</span>` : ''}
         </div>
         ${bloques}
+        <div class="equipo-ver-mas">Ver detalle →</div>
       </div>`;
   }).join('');
 }
@@ -1064,12 +1272,90 @@ function renderChartGrupos() {
 
   const entradas = Object.entries(porGrupo).sort((a, b) => b[1] - a[1]);
   const paleta = ['#003478', '#F39C12', '#27AE60', '#8E44AD', '#16A085', '#E74C3C', '#95A5A6'];
+  const nombresGrupos = entradas.map(e => e[0]); // orden mostrado en el eje
 
   if (chartGrupos) chartGrupos.destroy();
   chartGrupos = new Chart(ctx.getContext('2d'), {
     type: 'bar',
     data: {
-      labels: entradas.map(e => e[0]),
+      labels: nombresGrupos,
+      datasets: [{ label: 'Litros', data: entradas.map(e => Math.round(e[1])),
+        backgroundColor: entradas.map((_, i) => paleta[i % paleta.length]),
+        borderRadius: 6, borderSkipped: false }],
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      // Al pinchar una barra, muestra el desglose de equipos de ese grupo.
+      onClick: (evt, elements) => {
+        if (!elements.length) return;
+        const grupo = nombresGrupos[elements[0].index];
+        renderChartSubgrupo(grupo, grupoDe);
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${fmt(c.parsed.x)} Lt · click para ver equipos` } },
+      },
+      scales: {
+        x: { beginAtZero: true, grid: { color: '#F0F0F0' }, ticks: { callback: v => fmt(v) + ' Lt' } },
+        y: { grid: { display: false } },
+      },
+    },
+  });
+
+  // Muestra el desglose del grupo previamente seleccionado, o el 1º por defecto.
+  const inicial = (_grupoSeleccionadoSub && nombresGrupos.includes(_grupoSeleccionadoSub))
+    ? _grupoSeleccionadoSub
+    : nombresGrupos[0];
+  if (inicial) renderChartSubgrupo(inicial, grupoDe);
+}
+
+// ---- Chart: subdistribución — equipos dentro de un grupo ----
+// [grupo] = nombre del grupo pinchado; [grupoDe] = mapa equipoId → grupo.
+function renderChartSubgrupo(grupo, grupoDe) {
+  _grupoSeleccionadoSub = grupo;
+  const ctx = document.getElementById('chartSubgrupo');
+  if (!ctx) return;
+  if (chartSubgrupo) { chartSubgrupo.destroy(); chartSubgrupo = null; }
+
+  const nom = document.getElementById('grupoSelNombre');
+  const hint = document.getElementById('grupoSelHint');
+  if (nom) nom.textContent = `· ${grupo}`;
+
+  // Suma litros por equipo dentro del grupo (los externos no tienen equipo).
+  const porEquipo = {}; // equipoId → litros
+  _records.forEach(r => {
+    const g = r.esExterno ? 'Externos' : (grupoDe[r.equipoId] || 'Externos');
+    if (g !== grupo) return;
+    if (r.esExterno) {
+      const emp = r.empresaExterna || 'Externo';
+      porEquipo['ext:' + emp] = (porEquipo['ext:' + emp] || 0) + (r.litriosIngresados || 0);
+    } else {
+      porEquipo[r.equipoId] = (porEquipo[r.equipoId] || 0) + (r.litriosIngresados || 0);
+    }
+  });
+
+  const nombreDe = (key) => {
+    if (key.startsWith('ext:')) return key.slice(4);
+    const e = _equipos.find(x => x.id === key);
+    return e ? `${e.nombre} (${e.patente})` : key;
+  };
+
+  const entradas = Object.entries(porEquipo).sort((a, b) => b[1] - a[1]);
+  if (hint) hint.textContent = entradas.length
+    ? `${entradas.length} equipo(s) · pincha otro grupo para cambiar`
+    : 'Sin consumo registrado en este grupo';
+
+  if (!entradas.length) {
+    // Nada que graficar.
+    return;
+  }
+
+  const paleta = ['#1F6FEB', '#F39C12', '#27AE60', '#8E44AD', '#16A085', '#E74C3C', '#E67E22', '#2E86C1', '#95A5A6'];
+
+  chartSubgrupo = new Chart(ctx.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: entradas.map(e => nombreDe(e[0])),
       datasets: [{ label: 'Litros', data: entradas.map(e => Math.round(e[1])),
         backgroundColor: entradas.map((_, i) => paleta[i % paleta.length]),
         borderRadius: 6, borderSkipped: false }],
@@ -1128,9 +1414,11 @@ function renderHistorialMantencion() {
 }
 
 function renderChartMantencion() {
-  const ok       = _equipos.filter(e => { const p = getPct(e); return p == null || p < 80; }).length;
-  const proximos = _equipos.filter(e => { const p = getPct(e); return p != null && p >= 80 && p < 100; }).length;
-  const urgentes = _equipos.filter(e => { const p = getPct(e); return p != null && p >= 100; }).length;
+  // Excluye dados de baja de las alertas de mantención.
+  const flota    = _equipos.filter(e => e.estado !== 'baja');
+  const ok       = flota.filter(e => { const p = getPct(e); return p == null || p < 80; }).length;
+  const proximos = flota.filter(e => { const p = getPct(e); return p != null && p >= 80 && p < 100; }).length;
+  const urgentes = flota.filter(e => { const p = getPct(e); return p != null && p >= 100; }).length;
 
   const ctx = document.getElementById('chartMantencion').getContext('2d');
   if (chartMant) chartMant.destroy();
@@ -1149,8 +1437,9 @@ function renderChartMantencion() {
 }
 
 function renderChartUsoMantencion() {
-  // Una barra por medidor crítico de cada equipo (incluye pluma).
+  // Una barra por medidor crítico de cada equipo (incluye pluma). Sin baja.
   const data = _equipos
+    .filter(e => e.estado !== 'baja')
     .map(e => {
       const m = getMedidorCritico(e);
       return m ? { nombre: `${e.nombre} (${e.patente})${m.tipo === 'pluma' ? ' [Pluma]' : ''}`, pct: m.pct } : null;
@@ -1182,8 +1471,9 @@ function renderChartUsoMantencion() {
 
 function renderTableMantencion() {
   // Cada fila = un medidor en alerta (un equipo pluma puede aparecer 2 veces).
+  // Los equipos dados de baja no generan alertas de mantención.
   const filas = [];
-  _equipos.forEach(e => {
+  _equipos.filter(e => e.estado !== 'baja').forEach(e => {
     medidoresDe(e).forEach(m => {
       if (m.pct != null && m.pct >= 80) filas.push({ e, m });
     });
@@ -1563,8 +1853,188 @@ function cerrarModalOperacion(e) {
 
 // Cerrar el modal con la tecla Escape.
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') cerrarModalOperacion();
+  if (e.key === 'Escape') { cerrarModalOperacion(); cerrarModalEquipo(); }
 });
+
+// ════════════════════════════════════════════════════════════════════════
+// MODAL: DETALLE COMPLETO DE UN EQUIPO
+// Avance del medidor (km/horómetro) en el tiempo, cargas de combustible y
+// mantenciones realizadas.
+// ════════════════════════════════════════════════════════════════════════
+
+let chartMedidorEquipo = null;
+
+function abrirModalEquipo(equipoIdEnc) {
+  const equipoId = decodeURIComponent(equipoIdEnc);
+  const eq = _equipos.find(x => x.id === equipoId);
+  if (!eq) return;
+
+  // Cargas de combustible del equipo (no externas), cronológico ascendente.
+  const cargas = _records
+    .filter(r => r.equipoId === equipoId && !r.esExterno)
+    .sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+
+  // Mantenciones del equipo.
+  const mantenciones = _maintenance
+    .filter(m => m.equipoId === equipoId)
+    .sort((a, b) => new Date(b.fechaMantencion) - new Date(a.fechaMantencion));
+
+  document.getElementById('modalEqTitulo').textContent = eq.nombre;
+  const partes = [eq.patente];
+  if (eq.tipo) partes.push(eq.tipo);
+  if (eq.grupo && eq.grupo.trim()) partes.push('Grupo: ' + eq.grupo.trim());
+  document.getElementById('modalEqSub').textContent = partes.join(' · ');
+
+  // ── Bloques de medidor actual (km/horómetro/pluma) ──
+  const medBloques = medidoresDe(eq).map(m => {
+    const pctCls = m.pct == null ? '' : (m.pct >= 100 ? 'danger' : m.pct >= 80 ? 'warn' : '');
+    return `
+      <div class="eqd-med">
+        <div class="eqd-med-top"><span>${m.label}</span><span>${m.pct != null ? m.pct.toFixed(0) + '%' : '—'}</span></div>
+        <div class="equipo-progress-bar">
+          <div class="equipo-progress-fill ${pctCls}" style="width:${m.pct != null ? Math.min(m.pct, 100).toFixed(1) : 0}%"></div>
+        </div>
+        <div class="med-detail">Actual: ${m.actual != null ? fmt(m.actual) + ' ' + m.unidad : '—'} · Próx: ${m.proximo != null ? fmt(m.proximo) + ' ' + m.unidad : '—'}${m.restante != null ? ' · Faltan ' + fmt(m.restante) + ' ' + m.unidad : ''}</div>
+      </div>`;
+  }).join('') || '<p class="op-notas">Sin medidores configurados.</p>';
+
+  // ── Métricas reales de uso (todo el historial del equipo) ──
+  const unidadEq = (eq.unidadMantencion === 'horas' || (eq.horasActual != null && eq.kmActual == null)) ? 'h' : 'km';
+  const conLectura = cargas.filter(r => r.kmOHoras != null); // cronológico asc
+  const totalLt = cargas.reduce((s, r) => s + (r.litriosIngresados || 0), 0);
+  let usoIniVal = null, usoIniF = null, usoFinVal = null, usoFinF = null, usoAvance = null, usoRend = null;
+  if (conLectura.length) {
+    usoIniVal = conLectura[0].kmOHoras;                       usoIniF = new Date(conLectura[0].fecha);
+    usoFinVal = conLectura[conLectura.length - 1].kmOHoras;   usoFinF = new Date(conLectura[conLectura.length - 1].fecha);
+    if (usoIniVal != null && usoFinVal != null) usoAvance = Math.max(0, usoFinVal - usoIniVal);
+    if (usoAvance != null && totalLt > 0) usoRend = usoAvance / totalLt;
+  }
+  const uKpi = (val, lbl) => `<div class="day-kpi"><span class="dk-val">${val}</span><span class="dk-lbl">${lbl}</span></div>`;
+  const usoPanel = conLectura.length >= 2
+    ? `<div class="day-kpis eqd-uso">
+        ${uKpi(`${fmt(Math.round(usoIniVal))} ${unidadEq}`, `Inicial · ${_fmtFecha(usoIniF)}`)}
+        ${uKpi(`${fmt(Math.round(usoFinVal))} ${unidadEq}`, `Final · ${_fmtFecha(usoFinF)}`)}
+        ${uKpi(`${fmt(Math.round(usoAvance))} ${unidadEq}`, 'Avance')}
+        ${uKpi(`${fmt(Math.round(totalLt))} Lt`, 'Combustible')}
+        ${uKpi(usoRend != null ? `${usoRend.toFixed(2)} ${unidadEq}/Lt` : '—', 'Rendimiento')}
+      </div>`
+    : '';
+
+  const cargasRows = cargas.length
+    ? cargas.slice().reverse().slice(0, 100).map(r => `
+        <tr>
+          <td>${fmtDate(r.fecha)}</td>
+          <td><strong>${fmt(r.litriosIngresados, 1)} Lt</strong></td>
+          <td>${r.kmOHoras != null ? fmt(r.kmOHoras) + ' ' + (r.tipoUnidad === 'km' ? 'km' : 'h') : '—'}</td>
+          <td>${areaBadge(r.areaTrabajo)}</td>
+          <td>${fuenteBadge(r)}</td>
+          <td>${r.operador || '—'}</td>
+        </tr>`).join('')
+    : '<tr><td colspan="6" class="td-loading">Sin cargas registradas</td></tr>';
+
+  // ── Tabla de mantenciones ──
+  const mantRows = mantenciones.length
+    ? mantenciones.slice(0, 50).map(m => `
+        <tr>
+          <td>${fmtDate(m.fechaMantencion)}</td>
+          <td>${(m.tipo || '—').toUpperCase()}</td>
+          <td style="max-width:220px">${m.descripcion || '—'}</td>
+          <td>${m.kmEnMantencion != null ? fmt(m.kmEnMantencion) + ' km' : (m.horasEnMantencion != null ? fmt(m.horasEnMantencion) + ' h' : '—')}</td>
+          <td>${m.responsable || '—'}</td>
+          <td>${(m.costo || 0) > 0 ? '$' + fmt(m.costo) : '—'}</td>
+          <td>${m.fotoUrl ? `<a href="${m.fotoUrl}" target="_blank" rel="noopener" title="Ver imagen">📷</a>` : '—'}</td>
+        </tr>`).join('')
+    : '<tr><td colspan="7" class="td-loading">Sin mantenciones registradas</td></tr>';
+
+  document.getElementById('modalEqBody').innerHTML = `
+    <div class="eqd-meds">${medBloques}</div>
+
+    ${usoPanel ? `<h4 class="eqd-title">Uso histórico <small>(desde la 1ª carga con lectura)</small></h4>${usoPanel}` : ''}
+
+    <h4 class="eqd-title">Avance del medidor en el tiempo</h4>
+    <div class="eqd-chart"><canvas id="chartMedidorEquipo"></canvas></div>
+
+    <h4 class="eqd-title">Cargas de combustible <small>(${cargas.length} · ${fmt(totalLt, 0)} Lt)</small></h4>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Fecha</th><th>Litros</th><th>Medidor</th><th>Área</th><th>Fuente</th><th>Operador</th></tr></thead>
+        <tbody>${cargasRows}</tbody>
+      </table>
+    </div>
+
+    <h4 class="eqd-title">Mantenciones realizadas <small>(${mantenciones.length})</small></h4>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th>Medidor</th><th>Responsable</th><th>Costo</th><th>Foto</th></tr></thead>
+        <tbody>${mantRows}</tbody>
+      </table>
+    </div>`;
+
+  document.getElementById('modalEquipo').classList.add('open');
+  // El chart debe crearse cuando el canvas ya está en el DOM y visible.
+  renderChartMedidorEquipo(cargas, mantenciones);
+}
+
+// Gráfico de avance del medidor principal (km u horómetro) usando las lecturas
+// de las cargas de combustible. Marca las mantenciones como líneas verticales.
+function renderChartMedidorEquipo(cargas, mantenciones) {
+  const ctx = document.getElementById('chartMedidorEquipo');
+  if (!ctx) return;
+  if (chartMedidorEquipo) { chartMedidorEquipo.destroy(); chartMedidorEquipo = null; }
+
+  // Puntos (fecha, lectura del medidor) de cada carga que traiga lectura.
+  const puntos = cargas
+    .filter(r => r.kmOHoras != null)
+    .map(r => ({ t: new Date(r.fecha), v: r.kmOHoras, unidad: r.tipoUnidad === 'km' ? 'km' : 'h' }));
+
+  if (puntos.length < 2) {
+    ctx.parentElement.innerHTML = '<p class="op-notas" style="padding:20px">No hay suficientes lecturas de medidor para graficar el avance.</p>';
+    return;
+  }
+
+  const unidad = puntos[puntos.length - 1].unidad;
+  const labels = puntos.map(p => p.t.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: '2-digit' }));
+  const data = puntos.map(p => p.v);
+
+  chartMedidorEquipo = new Chart(ctx.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: `Medidor (${unidad})`,
+        data,
+        borderColor: '#1F6FEB',
+        backgroundColor: 'rgba(31,111,235,0.10)',
+        pointBackgroundColor: '#1F6FEB',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 1.5,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+        borderWidth: 2.5,
+        fill: true,
+        tension: 0.15,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => `${fmt(c.parsed.y)} ${unidad}` } },
+      },
+      scales: {
+        y: { beginAtZero: false, grid: { color: '#F0F0F0' }, ticks: { callback: v => fmt(v) + ' ' + unidad } },
+        x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8 } },
+      },
+    },
+  });
+}
+
+function cerrarModalEquipo(e) {
+  if (e && e.target && e.target.id !== 'modalEquipo' && e.type === 'click') return;
+  document.getElementById('modalEquipo').classList.remove('open');
+  if (chartMedidorEquipo) { chartMedidorEquipo.destroy(); chartMedidorEquipo = null; }
+}
 
 // ════════════════════════════════════════════════════════════════════════
 // SECCIÓN FACTORES (FU / FO)

@@ -551,6 +551,26 @@ body {
 .filter-btn.active { background: var(--azul); border-color: var(--azul); color: #fff; }
 .ml-auto { margin-left: auto; }
 
+/* Barra de exportación de reporte de uso */
+.export-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 20px; padding: 12px 14px;
+  background: var(--white); border: 1px solid var(--gris-bd);
+  border-radius: var(--radius);
+}
+.export-lbl { font-size: 13px; font-weight: 700; color: var(--text); }
+.export-bar label { font-size: 12px; color: var(--text-sm); display: flex; align-items: center; gap: 6px; }
+.btn-export {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: none; border-radius: 8px; padding: 8px 14px;
+  font-size: 13px; font-weight: 600; color: #fff; cursor: pointer;
+  transition: opacity 0.15s;
+}
+.btn-export:hover { opacity: 0.88; }
+.btn-export svg { fill: #fff; }
+.btn-export-xls { background: var(--verde); }
+.btn-export-pdf { background: var(--rojo); }
+
 .equipos-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -566,6 +586,7 @@ body {
 }
 .equipo-card.mantencion  { border-top-color: var(--naranja); }
 .equipo-card.fuera_servicio { border-top-color: var(--rojo); }
+.equipo-card.baja { border-top-color: #7F8C8D; opacity: 0.72; }
 
 .equipo-header {
   display: flex; align-items: flex-start;
@@ -583,6 +604,7 @@ body {
 .badge-activo   { background: var(--verde-bg);  color: var(--verde); }
 .badge-mant     { background: var(--narj-bg);   color: var(--naranja); }
 .badge-fuera    { background: var(--rojo-bg);   color: var(--rojo); }
+.badge-baja     { background: var(--gris-bd);   color: var(--text-sm); }
 
 .equipo-info { font-size: 12px; color: var(--text-sm); margin-bottom: 12px; }
 .equipo-info span { display: block; margin-bottom: 3px; }
@@ -833,6 +855,43 @@ body {
 .modal-close:hover { background: rgba(255,255,255,0.3); }
 .modal-close svg { width: 20px; height: 20px; fill: #fff; }
 .modal-body { padding: 18px 20px; overflow-y: auto; }
+
+/* Modal grande (detalle de equipo) */
+.modal-box-lg { max-width: 860px; }
+
+/* Tarjeta de equipo clickeable */
+.equipo-clickable { cursor: pointer; transition: transform 0.12s, box-shadow 0.12s; }
+.equipo-clickable:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,0.12); }
+.equipo-ver-mas {
+  margin-top: 10px; text-align: right;
+  font-size: 11px; font-weight: 700; color: var(--azul);
+}
+
+/* Detalle de equipo dentro del modal */
+.eqd-meds {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px; margin-bottom: 8px;
+}
+.eqd-med {
+  background: var(--gris); border-radius: 10px; padding: 12px;
+}
+.eqd-med-top {
+  display: flex; justify-content: space-between;
+  font-size: 12px; font-weight: 700; margin-bottom: 6px;
+}
+.eqd-title {
+  font-size: 13px; font-weight: 700; margin: 20px 0 10px;
+  color: var(--text); border-left: 3px solid var(--azul); padding-left: 8px;
+}
+.eqd-title small { font-weight: 500; color: var(--text-sm); }
+.eqd-chart { height: 260px; position: relative; margin-bottom: 4px; }
+
+/* Panel de uso histórico dentro del modal de equipo */
+.eqd-uso {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  padding: 0; margin-bottom: 4px;
+}
+.eqd-uso .dk-lbl { font-size: 10px; }
 
 /* Tarjeta de factores dentro del modal */
 .fact-row { display: flex; gap: 16px; margin-bottom: 16px; }
