@@ -195,6 +195,19 @@ function getPctAlerta(e) {
   return getPct(e);
 }
 
+// True si el equipo tiene al menos un documento vencido (fecha ya pasada).
+function tieneDocVencido(e) {
+  const ahora = new Date();
+  const docs = e.documentos || {};
+  return Object.values(docs).some(info => {
+    const esObj = info && typeof info === 'object';
+    if (esObj && info.noVence === true) return false;
+    const venceStr = esObj ? info.vence : info;
+    if (!venceStr) return false;
+    return new Date(venceStr) < ahora;
+  });
+}
+
 // Restante del medidor más crítico (el que está más cerca/pasado del límite).
 function getMedidorCritico(e) {
   const ms = medidoresDe(e).filter(m => m.pct != null);
@@ -486,22 +499,22 @@ function renderChartDistribucion() {
 
 // ---- Chart: Estado de flota (doughnut) ----
 function renderChartFlota() {
-  const activos = _equipos.filter(e => e.estado === 'activo').length;
-  const mant    = _equipos.filter(e => e.estado === 'mantencion').length;
-  const fuera   = _equipos.filter(e => e.estado === 'fuera_servicio').length;
-  const baja    = _equipos.filter(e => e.estado === 'baja').length;
-  const total   = _equipos.length;
+  // Alineado con la app: Activos, Doc. vencida, Mant. vencida y Dados de Baja.
+  const activos    = _equipos.filter(e => e.estado === 'activo').length;
+  const docVenc    = _equipos.filter(e => tieneDocVencido(e)).length;
+  const mantVenc   = _equipos.filter(e => { const p = getPctAlerta(e); return p != null && p >= 100; }).length;
+  const baja       = _equipos.filter(e => e.estado === 'baja').length;
 
-  document.getElementById('dcTotal').textContent = total;
+  document.getElementById('dcTotal').textContent = activos;
 
   const ctx = document.getElementById('chartEstadoFlota').getContext('2d');
   if (chartFlota) chartFlota.destroy();
   chartFlota = new Chart(ctx, {
     type: 'doughnut',
     data: {
-      labels: ['Activos', 'En Mantención', 'Fuera de Servicio', 'Dados de Baja'],
-      datasets: [{ data: [activos, mant, fuera, baja],
-        backgroundColor: ['#27AE60', '#F39C12', '#E74C3C', '#7F8C8D'], borderWidth: 0, hoverOffset: 6 }],
+      labels: ['Activos', 'Doc. Vencida', 'Mant. Vencida', 'Dados de Baja'],
+      datasets: [{ data: [activos, docVenc, mantVenc, baja],
+        backgroundColor: ['#27AE60', '#E67E22', '#E74C3C', '#7F8C8D'], borderWidth: 0, hoverOffset: 6 }],
     },
     options: {
       responsive: true, maintainAspectRatio: false, cutout: '68%',
@@ -979,7 +992,13 @@ function filterEquiposGrupo(sel) {
 function equiposFiltrados() {
   const q = (document.getElementById('searchEquipos')?.value || '').toLowerCase();
   let lista = [..._equipos];
-  if (_equipoFilter !== 'todos') lista = lista.filter(e => e.estado === _equipoFilter);
+  if (_equipoFilter === '__doc') {
+    lista = lista.filter(e => tieneDocVencido(e));
+  } else if (_equipoFilter === '__venc') {
+    lista = lista.filter(e => { const p = getPctAlerta(e); return p != null && p >= 100; });
+  } else if (_equipoFilter !== 'todos') {
+    lista = lista.filter(e => e.estado === _equipoFilter);
+  }
   if (_grupoFilter !== 'todos') lista = lista.filter(e => (e.grupo || '').trim() === _grupoFilter);
   if (q) {
     lista = lista.filter(e =>
@@ -1234,6 +1253,7 @@ function renderEquipos() {
           <span>Tipo: ${e.tipo || '—'}</span>
           ${(e.grupo && e.grupo.trim()) ? `<span>Grupo: ${e.grupo.trim()}</span>` : ''}
           ${(e.marca || e.modelo) ? `<span>Marca/Modelo: ${e.marca || ''} ${e.modelo || ''}</span>` : ''}
+          ${(e.estado === 'baja' && e.fechaBaja) ? `<span>Baja: ${fmtDate(e.fechaBaja)}</span>` : ''}
         </div>
         ${bloques}
         <div class="equipo-ver-mas">Ver detalle →</div>
@@ -1883,6 +1903,7 @@ function abrirModalEquipo(equipoIdEnc) {
   const partes = [eq.patente];
   if (eq.tipo) partes.push(eq.tipo);
   if (eq.grupo && eq.grupo.trim()) partes.push('Grupo: ' + eq.grupo.trim());
+  if (eq.estado === 'baja' && eq.fechaBaja) partes.push('Dado de baja: ' + fmtDate(eq.fechaBaja));
   document.getElementById('modalEqSub').textContent = partes.join(' · ');
 
   // ── Bloques de medidor actual (km/horómetro/pluma) ──
