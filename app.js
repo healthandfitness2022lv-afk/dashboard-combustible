@@ -153,6 +153,18 @@ function restanteMedidor(actual, proximo) {
 
 // Devuelve la lista de medidores aplicables de un equipo, cada uno con su
 // estado de mantención. Tipo: 'km' | 'horometro' | 'pluma'.
+// Nombres legibles de los tipos de equipo (coincide con la app).
+const TIPOS_EQUIPO = {
+  excavadora: 'Excavadora', pala: 'Pala', cargador: 'Cargador Frontal',
+  perforadora: 'Perforadora', volqueta: 'Volqueta', grua: 'Grúa',
+  ventilador: 'Ventilador', bomba: 'Bomba de Agua', compresor: 'Compresor',
+  bidon: 'Bidón de Reserva', otro: 'Otro',
+};
+function tipoLegible(t) { return TIPOS_EQUIPO[t] || t || '—'; }
+
+// Un bidón de reserva: equipo tipo 'bidon', sin medidores ni mantención.
+function esBidon(e) { return e.tipo === 'bidon'; }
+
 function medidoresDe(e) {
   const lista = [];
   if (tieneKm(e)) {
@@ -996,6 +1008,8 @@ function equiposFiltrados() {
     lista = lista.filter(e => tieneDocVencido(e));
   } else if (_equipoFilter === '__venc') {
     lista = lista.filter(e => { const p = getPctAlerta(e); return p != null && p >= 100; });
+  } else if (_equipoFilter === '__bidon') {
+    lista = lista.filter(e => esBidon(e));
   } else if (_equipoFilter !== 'todos') {
     lista = lista.filter(e => e.estado === _equipoFilter);
   }
@@ -1215,9 +1229,13 @@ function renderEquipos() {
                     e.estado === 'fuera_servicio' ? 'fuera_servicio' :
                     e.estado === 'baja' ? 'baja' : '';
 
-    // Un bloque de progreso por cada medidor del equipo (km, horómetro, pluma).
+    // Los bidones no llevan medidores: se muestran con una nota propia.
     const medidores = medidoresDe(e);
-    const bloques = medidores.map(m => {
+    const bloques = esBidon(e)
+      ? `<div class="equipo-medidor equipo-bidon-nota">
+           <span class="bidon-icon">🛢️</span> Bidón de reserva · sin mantención
+         </div>`
+      : medidores.map(m => {
       if (m.pct == null) {
         return `<div class="equipo-medidor">
                   <div class="equipo-progress-label"><span>${m.label}</span><span>—</span></div>
@@ -1244,13 +1262,13 @@ function renderEquipos() {
       <div class="equipo-card ${cardCls} equipo-clickable" onclick="abrirModalEquipo('${encodeURIComponent(e.id)}')" title="Ver detalle del equipo">
         <div class="equipo-header">
           <div>
-            <div class="equipo-nombre">${e.nombre}</div>
-            <div class="equipo-codigo">${e.patente}${tienePluma(e) ? ' · <span class="pluma-tag">PLUMA</span>' : ''}</div>
+            <div class="equipo-nombre">${esBidon(e) ? '🛢️ ' : ''}${e.nombre}${esBidon(e) ? ' <span class="bidon-tag">BIDÓN</span>' : ''}</div>
+            <div class="equipo-codigo">${e.patente || (esBidon(e) ? 'Sin patente' : '')}${tienePluma(e) ? ' · <span class="pluma-tag">PLUMA</span>' : ''}</div>
           </div>
           <span class="estado-badge ${estadoCls}">${estadoText}</span>
         </div>
         <div class="equipo-info">
-          <span>Tipo: ${e.tipo || '—'}</span>
+          <span>Tipo: ${tipoLegible(e.tipo)}</span>
           ${(e.grupo && e.grupo.trim()) ? `<span>Grupo: ${e.grupo.trim()}</span>` : ''}
           ${(e.marca || e.modelo) ? `<span>Marca/Modelo: ${e.marca || ''} ${e.modelo || ''}</span>` : ''}
           ${(e.estado === 'baja' && e.fechaBaja) ? `<span>Baja: ${fmtDate(e.fechaBaja)}</span>` : ''}
@@ -1262,8 +1280,8 @@ function renderEquipos() {
 }
 
 // ---- Chart: Combustible por Grupo / Flota ----
-// Equipos sin grupo y registros externos se contabilizan en "Externos",
-// igual que en la app.
+// "Externos" = solo entregas a terceros (esExterno). Equipos propios sin grupo
+// van a "Sin grupo", y los bidones a "Bidones".
 function renderChartGrupos() {
   const row = document.getElementById('rowGrupos');
   const ctx = document.getElementById('chartGrupos');
@@ -1278,21 +1296,32 @@ function renderChartGrupos() {
   if (row) row.style.display = '';
 
   const grupoDe = {};
-  _equipos.forEach(e => { grupoDe[e.id] = (e.grupo && e.grupo.trim()) ? e.grupo.trim() : 'Externos'; });
+  _equipos.forEach(e => {
+    // Los bidones tienen su propia categoría; el resto usa su grupo (o 'Sin grupo').
+    grupoDe[e.id] = esBidon(e)
+      ? 'Bidones'
+      : (e.grupo && e.grupo.trim()) ? e.grupo.trim() : 'Sin grupo';
+  });
 
   const porGrupo = {};
   _records.forEach(r => {
+    // "Externos" contiene SOLO entregas a terceros. Los equipos propios van a
+    // su grupo (o 'Sin grupo'); cargas de equipos ya borrados, también.
     if (r.esExterno) {
       porGrupo['Externos'] = (porGrupo['Externos'] || 0) + (r.litriosIngresados || 0);
       return;
     }
-    const g = grupoDe[r.equipoId] || 'Externos';
+    const g = grupoDe[r.equipoId] || 'Sin grupo';
     porGrupo[g] = (porGrupo[g] || 0) + (r.litriosIngresados || 0);
   });
 
   const entradas = Object.entries(porGrupo).sort((a, b) => b[1] - a[1]);
   const paleta = ['#003478', '#F39C12', '#27AE60', '#8E44AD', '#16A085', '#E74C3C', '#95A5A6'];
   const nombresGrupos = entradas.map(e => e[0]); // orden mostrado en el eje
+
+  // Altura acorde al nº de grupos para que ninguna barra quede aplastada.
+  const bodyG = ctx.closest('.chart-body');
+  if (bodyG) bodyG.style.height = Math.max(260, entradas.length * 32 + 40) + 'px';
 
   if (chartGrupos) chartGrupos.destroy();
   chartGrupos = new Chart(ctx.getContext('2d'), {
@@ -1344,7 +1373,7 @@ function renderChartSubgrupo(grupo, grupoDe) {
   // Suma litros por equipo dentro del grupo (los externos no tienen equipo).
   const porEquipo = {}; // equipoId → litros
   _records.forEach(r => {
-    const g = r.esExterno ? 'Externos' : (grupoDe[r.equipoId] || 'Externos');
+    const g = r.esExterno ? 'Externos' : (grupoDe[r.equipoId] || 'Sin grupo');
     if (g !== grupo) return;
     if (r.esExterno) {
       const emp = r.empresaExterna || 'Externo';
@@ -1369,6 +1398,12 @@ function renderChartSubgrupo(grupo, grupoDe) {
     // Nada que graficar.
     return;
   }
+
+  // La altura del gráfico crece con el nº de barras (≈32px por equipo), para que
+  // NINGÚN equipo quede aplastado ni oculto cuando el grupo tiene muchos.
+  const alto = Math.max(260, entradas.length * 32 + 40);
+  const body = ctx.closest('.chart-body');
+  if (body) body.style.height = alto + 'px';
 
   const paleta = ['#1F6FEB', '#F39C12', '#27AE60', '#8E44AD', '#16A085', '#E74C3C', '#E67E22', '#2E86C1', '#95A5A6'];
 
@@ -1900,8 +1935,9 @@ function abrirModalEquipo(equipoIdEnc) {
     .sort((a, b) => new Date(b.fechaMantencion) - new Date(a.fechaMantencion));
 
   document.getElementById('modalEqTitulo').textContent = eq.nombre;
-  const partes = [eq.patente];
-  if (eq.tipo) partes.push(eq.tipo);
+  const partes = [];
+  if (eq.patente) partes.push(eq.patente);
+  if (eq.tipo) partes.push(tipoLegible(eq.tipo));
   if (eq.grupo && eq.grupo.trim()) partes.push('Grupo: ' + eq.grupo.trim());
   if (eq.estado === 'baja' && eq.fechaBaja) partes.push('Dado de baja: ' + fmtDate(eq.fechaBaja));
   document.getElementById('modalEqSub').textContent = partes.join(' · ');
@@ -1967,13 +2003,17 @@ function abrirModalEquipo(equipoIdEnc) {
         </tr>`).join('')
     : '<tr><td colspan="7" class="td-loading">Sin mantenciones registradas</td></tr>';
 
+  // Un bidón no tiene medidor ni mantenciones: se ocultan esas secciones.
+  const bidon = esBidon(eq);
+
   document.getElementById('modalEqBody').innerHTML = `
     <div class="eqd-meds">${medBloques}</div>
 
     ${usoPanel ? `<h4 class="eqd-title">Uso histórico <small>(desde la 1ª carga con lectura)</small></h4>${usoPanel}` : ''}
 
+    ${bidon ? '' : `
     <h4 class="eqd-title">Avance del medidor en el tiempo</h4>
-    <div class="eqd-chart"><canvas id="chartMedidorEquipo"></canvas></div>
+    <div class="eqd-chart"><canvas id="chartMedidorEquipo"></canvas></div>`}
 
     <h4 class="eqd-title">Cargas de combustible <small>(${cargas.length} · ${fmt(totalLt, 0)} Lt)</small></h4>
     <div class="table-wrap">
@@ -1983,17 +2023,18 @@ function abrirModalEquipo(equipoIdEnc) {
       </table>
     </div>
 
+    ${bidon ? '' : `
     <h4 class="eqd-title">Mantenciones realizadas <small>(${mantenciones.length})</small></h4>
     <div class="table-wrap">
       <table class="data-table">
         <thead><tr><th>Fecha</th><th>Tipo</th><th>Descripción</th><th>Medidor</th><th>Responsable</th><th>Costo</th><th>Foto</th></tr></thead>
         <tbody>${mantRows}</tbody>
       </table>
-    </div>`;
+    </div>`}`;
 
   document.getElementById('modalEquipo').classList.add('open');
-  // El chart debe crearse cuando el canvas ya está en el DOM y visible.
-  renderChartMedidorEquipo(cargas, mantenciones);
+  // El chart solo aplica a equipos con medidor (los bidones no lo tienen).
+  if (!bidon) renderChartMedidorEquipo(cargas, mantenciones);
 }
 
 // Gráfico de avance del medidor principal (km u horómetro) usando las lecturas

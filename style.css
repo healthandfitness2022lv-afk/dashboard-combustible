@@ -283,8 +283,12 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
+  /* Si el título + badge no caben, el badge baja a la línea siguiente en vez
+     de aplastar el título hasta hacerlo desaparecer. */
+  flex-wrap: wrap;
 }
-.chart-header h3 { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
+/* min-width:0 permite que el título ceda ancho correctamente dentro del flex. */
+.chart-header h3 { font-size: 14px; font-weight: 600; color: var(--text); flex: 1 1 auto; min-width: 0; }
 
 .chart-badge {
   font-size: 11px;
@@ -293,6 +297,7 @@ body {
   padding: 3px 8px;
   border-radius: 20px;
   font-weight: 600;
+  flex-shrink: 0; /* el badge nunca se comprime ni empuja fuera al título */
 }
 
 .chart-body {
@@ -792,6 +797,21 @@ body {
   background: var(--oro); color: #4a3a00; padding: 1px 6px;
   border-radius: 6px; font-size: 10px; font-weight: 700; letter-spacing: .3px;
 }
+
+/* Etiqueta y nota para bidones de reserva. */
+.bidon-tag {
+  background: #1e8449; color: #fff; padding: 1px 6px;
+  border-radius: 6px; font-size: 10px; font-weight: 700; letter-spacing: .3px;
+}
+.equipo-bidon-nota {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-sm); font-weight: 600;
+  padding: 8px 10px; margin-top: 10px;
+  background: rgba(30, 132, 73, 0.08);
+  border: 1px solid rgba(30, 132, 73, 0.25);
+  border-radius: 8px;
+}
+.equipo-bidon-nota .bidon-icon { font-size: 14px; }
 
 /* ===== Bloques de medidor por equipo (km / horómetro / pluma) ===== */
 .equipo-medidor { margin-top: 10px; }
