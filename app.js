@@ -854,12 +854,28 @@ function renderReporteCombustible() {
     .reduce((s, r) => s + (r.litriosIngresados || 0), 0);
   const recargaLt = recargas.reduce((s, r) => s + (r.litros || 0), 0);
 
+  // Míter (contador acumulado de litros que SALEN de la cisterna, no-COPEC).
+  // Mismo criterio que el míter del Resumen: suma TODO lo no-COPEC (propio y
+  // externo); las devoluciones de empresas suben el estanque pero NO el míter.
+  //   inicial = acumulado histórico + todo lo no-COPEC ANTES de este día.
+  //   final   = inicial + lo no-COPEC DURANTE este día.
+  const esMiter = (r) => (r.fuente || 'cisterna') !== 'copec';
+  const miterInicial = ACUM_INICIAL_ENTREGADO + _records
+    .filter(r => esMiter(r) && diaLocal(r.fecha) < dia)
+    .reduce((s, r) => s + (r.litriosIngresados || 0), 0);
+  const miterDia = cargas
+    .filter(esMiter)
+    .reduce((s, r) => s + (r.litriosIngresados || 0), 0);
+  const miterFinal = miterInicial + miterDia;
+
   const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   setTxt('dkTotalDia', fmt(totalDia) + ' Lt');
   setTxt('dkCargasDia', cargas.length);
   setTxt('dkBesalcoDia', fmt(besalco) + ' Lt');
   setTxt('dkExternosDia', fmt(externos) + ' Lt');
   setTxt('dkRecargaDia', recargaLt > 0 ? '+' + fmt(recargaLt) + ' Lt' : '—');
+  setTxt('dkMiterIniDia', fmt(miterInicial) + ' Lt');
+  setTxt('dkMiterFinDia', fmt(miterFinal) + ' Lt');
 
   // Tabla detalle.
   if (!cargas.length) {
